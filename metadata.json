@@ -1,0 +1,5 @@
+{
+  "name": "CloudSpend AI Analyzer",
+  "description": "A comprehensive AWS billing dashboard that performs month-over-month analysis, anomaly detection, and provides AI-driven cost optimization recommendations.",
+  "requestFramePermissions": []
+}
