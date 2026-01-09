@@ -1,4 +1,3 @@
-
 import React, { useState, useMemo } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
@@ -111,6 +110,7 @@ export default function App() {
   const generateAIReport = async () => {
     setIsAnalyzing(true);
     try {
+      // Create a new instance right before use to ensure the latest API key is used
       const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
       const prompt = `Perform a deep Month-Over-Month (MoM) analysis on this AWS Billing data: ${JSON.stringify(billingHistory)}. 
       Highlight Canada Central ($6,625.50), N. Virginia ($3,277.74), and Ohio ($1,394.47). 
@@ -282,7 +282,8 @@ export default function App() {
                   </thead>
                   <tbody className="divide-y divide-slate-50">
                     {regionalMoM.map((row, idx) => {
-                      const prev = previousMonth.entries.find(p => p.region === row.region)?.cost || 0;
+                      // Added safe navigation for previousMonth entries access
+                      const prev = previousMonth?.entries.find(p => p.region === row.region)?.cost || 0;
                       return (
                         <tr key={idx} className="hover:bg-slate-50 transition-colors">
                           <td className="py-5 px-4">

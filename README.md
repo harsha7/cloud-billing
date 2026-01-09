@@ -1,18 +1,18 @@
+# ☁️ CloudSpend AI Analyzer
 
+Professional AWS Billing Dashboard with MoM Analysis and AI Intelligence.
 
-# Run and deploy your AI Studio app
+## 🔗 Access Your App
+Your dashboard is live at:
+**[https://harsha7.github.io/cloud-billing/](https://harsha7.github.io/cloud-billing/)**
 
-This contains everything you need to run your app locally.
+## 🚀 Troubleshooting Deployment
+If the link above shows a 404:
+1. Go to **Settings > Pages** in your GitHub repo.
+2. Ensure **Build and deployment > Source** is set to **GitHub Actions**.
+3. If it was already set, wait 60 seconds and refresh.
 
-View your app in AI Studio: https://ai.studio/apps/drive/1C_6X3yYHez9PE_wsRGd7Ltms-_H-EIYq
-
-## Run Locally
-
-**Prerequisites:**  Node.js
-
-
-1. Install dependencies:
-   `npm install`
-2. Set the `GEMINI_API_KEY` in [.env.local](.env.local) to your Gemini API key
-3. Run the app:
-   `npm run dev`
+## 📊 Features
+- **Canada Central ($6,625.50)** highlighted for cost spike.
+- **MoM Variance** comparisons (Oct vs Nov).
+- **AI Intelligence** tab powered by Gemini-3-Pro for anomaly detection.

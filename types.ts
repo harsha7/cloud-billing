@@ -1,8 +1,9 @@
-
 export interface BillingEntry {
   region: string;
   project: string;
   cost: number;
+  // Added index signature to satisfy Recharts data requirements which expects generic object access
+  [key: string]: string | number;
 }
 
 export interface MonthlyData {
@@ -17,26 +18,16 @@ export interface ComparisonResult {
   deltaPercent: number;
 }
 
-export enum AnalysisStatus {
-  IDLE = 'IDLE',
-  LOADING = 'LOADING',
-  SUCCESS = 'SUCCESS',
-  ERROR = 'ERROR'
-}
-
 export interface AWSCredentials {
   accessKeyId: string;
   secretAccessKey: string;
   region: string;
 }
 
-export interface AIAnalysis {
-  summary: string;
-  varianceDrivers: string[];
+export interface AIReportData {
+  varianceSummary: string;
+  regionalDrivers: { region: string; reason: string }[];
   anomalies: string[];
-  recommendations: {
-    category: string;
-    opportunity: string;
-    impact: string;
-  }[];
+  recommendations: { action: string; priority: string; impact: string }[];
+  optimizationScore: number;
 }
