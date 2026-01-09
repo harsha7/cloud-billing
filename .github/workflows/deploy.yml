@@ -1,4 +1,3 @@
-
 name: Deploy to GitHub Pages
 
 on:
@@ -28,7 +27,7 @@ jobs:
         uses: actions/setup-node@v4
         with:
           node-version: 20
-          cache: 'npm'
+          # Removed cache: 'npm' because package-lock.json is missing
       - name: Install dependencies
         run: npm install
       - name: Build
