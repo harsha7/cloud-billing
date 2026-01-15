@@ -13,11 +13,11 @@ import { MonthlyData, AWSCredentials } from './types';
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-// Target regions in STRICT ORDER requested by user
+// Target regions in STRICT ORDER requested by user with updated project labels
 const TARGET_REGIONS = [
-  { key: 'ca-central-1', label: 'Canada Central', match: ['canada', 'ca-central-1'] },
-  { key: 'us-east-1', label: 'N. Virginia', match: ['virginia', 'us-east-1'] },
-  { key: 'us-east-2', label: 'Ohio', match: ['ohio', 'us-east-2'] },
+  { key: 'ca-central-1', label: 'Canada Central (X-ray)', match: ['canada', 'ca-central-1'] },
+  { key: 'us-east-1', label: 'N. Virginia (Managed services infra)', match: ['virginia', 'us-east-1'] },
+  { key: 'us-east-2', label: 'Ohio (ri-commercedev)', match: ['ohio', 'us-east-2'] },
   { key: 'us-west-2', label: 'Oregon', match: ['oregon', 'us-west-2'] },
   { key: 'Global', label: 'Taxes / Global', match: ['tax', 'global', 'no region', 'n/a'] }
 ];
@@ -53,6 +53,36 @@ const generateMock12Months = (): MonthlyData[] => {
 const encodeState = (data: MonthlyData[]) => btoa(JSON.stringify(data));
 const decodeState = (str: string): MonthlyData[] | null => {
   try { return JSON.parse(atob(str)); } catch (e) { return null; }
+};
+
+// Custom Chart Tick for Multi-line Regional Labels
+const CustomRegionTick = (props: any) => {
+  const { x, y, payload } = props;
+  const label = payload.value;
+  
+  // Regex to split "Region Name (Project Name)"
+  const match = label.match(/^(.*?)\s*\((.*?)\)$/);
+  
+  if (match) {
+    return (
+      <g transform={`translate(${x},${y})`}>
+        <text x={0} y={15} textAnchor="middle" fill="#1e293b" fontSize={14} fontWeight="900" className="uppercase tracking-tight">
+          {match[1]}
+        </text>
+        <text x={0} y={35} textAnchor="middle" fill="#3b82f6" fontSize={12} fontWeight="800">
+          ({match[2]})
+        </text>
+      </g>
+    );
+  }
+
+  return (
+    <g transform={`translate(${x},${y})`}>
+      <text x={0} y={15} textAnchor="middle" fill="#1e293b" fontSize={14} fontWeight="900" className="uppercase tracking-tight">
+        {label}
+      </text>
+    </g>
+  );
 };
 
 export default function App() {
@@ -128,20 +158,18 @@ export default function App() {
 
   const currentMonth = billingHistory[billingHistory.length - 1];
   
-  // FILTER AND SORT REGIONS IN STRICT REQUESTED ORDER
+  // FILTER AND SORT REGIONS IN STRICT REQUESTED ORDER WITH DESCRIPTIVE LABELS
   const orderedRegions = useMemo(() => {
-    const matched = currentMonth.entries.filter(e => {
-      const name = e.region.toLowerCase();
-      return TARGET_REGIONS.some(target => 
-        target.match.some(keyword => name.includes(keyword))
-      );
-    });
-
-    // Sort based on the index in TARGET_REGIONS
-    return matched.sort((a, b) => {
-      const indexA = TARGET_REGIONS.findIndex(t => t.match.some(k => a.region.toLowerCase().includes(k)));
-      const indexB = TARGET_REGIONS.findIndex(t => t.match.some(k => b.region.toLowerCase().includes(k)));
-      return indexA - indexB;
+    return TARGET_REGIONS.map(target => {
+      const entry = currentMonth.entries.find(e => {
+        const name = e.region.toLowerCase();
+        return target.match.some(keyword => name.includes(keyword));
+      });
+      // Return a combined object for the chart
+      return {
+        region: target.label,
+        cost: entry?.cost || 0
+      };
     });
   }, [currentMonth]);
 
@@ -156,7 +184,6 @@ from datetime import datetime, timedelta
 
 def lambda_handler(event, context):
     try:
-        # Handle simple GET test
         if event.get('requestContext', {}).get('http', {}).get('method') == 'GET':
             return {'statusCode': 200, 'body': json.dumps({"status": "online"})}
 
@@ -299,7 +326,7 @@ def lambda_handler(event, context):
           </button>
         </header>
 
-        <div className="p-12 max-w-7xl mx-auto space-y-12">
+        <div className={`p-12 mx-auto space-y-12 ${activeTab === 'trends' ? 'max-w-[100%]' : 'max-w-7xl'}`}>
           {/* Summary Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
             <div className="bg-white p-12 rounded-[64px] border border-slate-200 shadow-sm relative group overflow-hidden">
@@ -324,7 +351,7 @@ def lambda_handler(event, context):
               <p className="text-3xl font-black text-slate-900 tracking-tight">Canada Central</p>
               <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest mt-3 flex items-center gap-2">
                  <span className="w-2 h-2 bg-purple-500 rounded-full animate-ping" />
-                 Peak Load • ${orderedRegions.find(r => r.region.toLowerCase().includes('canada'))?.cost.toLocaleString() || '0'}
+                 Peak Load • ${orderedRegions[0]?.cost.toLocaleString() || '0'}
               </p>
             </div>
 
@@ -352,16 +379,22 @@ def lambda_handler(event, context):
                     <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-2">Hierarchy: Canada → Virginia → Ohio → Oregon → Taxes</p>
                   </div>
                 </div>
-                <div className="h-[500px]">
+                <div className="h-[550px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={orderedRegions}>
+                    <BarChart data={orderedRegions} margin={{ bottom: 60 }}>
                       <defs>
                         <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="0%" stopColor="#3b82f6" stopOpacity={1}/><stop offset="100%" stopColor="#6366f1" stopOpacity={0.8}/>
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                      <XAxis dataKey="region" fontSize={11} stroke="#cbd5e1" axisLine={false} tickLine={false} dy={20} fontWeight="black" />
+                      <XAxis 
+                        dataKey="region" 
+                        interval={0}
+                        axisLine={false} 
+                        tickLine={false} 
+                        tick={<CustomRegionTick />}
+                      />
                       <YAxis tickFormatter={(val) => `$${val.toLocaleString()}`} stroke="#cbd5e1" fontSize={11} axisLine={false} tickLine={false} fontWeight="black" />
                       <Tooltip cursor={{ fill: '#f8fafc', radius: 32 }} contentStyle={{ borderRadius: '48px', border: 'none', boxShadow: '0 40px 100px -20px rgb(0 0 0 / 0.3)', padding: '32px' }} />
                       <Bar dataKey="cost" fill="url(#barGradient)" radius={[24, 24, 0, 0]} barSize={80} />
@@ -373,22 +406,24 @@ def lambda_handler(event, context):
           )}
 
           {activeTab === 'trends' && (
-            <div className="animate-in fade-in slide-in-from-bottom-8 duration-700">
-              <div className="bg-white rounded-[72px] border border-slate-200 overflow-hidden shadow-sm">
-                <div className="px-16 py-16 border-b border-slate-100 bg-slate-50/50">
-                  <h2 className="text-[14px] font-black uppercase tracking-[0.3em] flex items-center gap-4 mb-2">
-                    <Database size={24} className="text-blue-500" /> Historical Billing Ledger
-                  </h2>
-                  <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">High-Visibility Regional Breakdown</p>
+            <div className="animate-in fade-in slide-in-from-bottom-8 duration-700 w-full">
+              <div className="bg-white rounded-[72px] border border-slate-200 overflow-hidden shadow-sm w-full">
+                <div className="px-16 py-16 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
+                  <div>
+                    <h2 className="text-[14px] font-black uppercase tracking-[0.3em] flex items-center gap-4 mb-2">
+                      <Database size={24} className="text-blue-500" /> Historical Billing Ledger
+                    </h2>
+                    <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">Enterprise-wide regional tracking • Last 12 Months</p>
+                  </div>
                 </div>
                 
-                <div className="overflow-x-auto">
-                  <table className="w-full text-left">
+                <div className="overflow-x-auto w-full">
+                  <table className="w-full text-left table-fixed">
                     <thead>
                       <tr className="text-[11px] font-black uppercase tracking-widest text-slate-400 bg-slate-50/80">
-                        <th className="py-12 px-16">Fiscal Period</th>
-                        <th className="py-12 px-16 text-right">Aggregate Spend</th>
-                        <th className="py-12 px-16 text-right">Cost Per Region Breakdown</th>
+                        <th className="py-12 px-16 w-48">Fiscal Period</th>
+                        <th className="py-12 px-16 w-64 text-right">Aggregate Spend</th>
+                        <th className="py-12 px-16 text-center">Cost Per Region Breakdown (Full Tracking View)</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
@@ -405,21 +440,31 @@ def lambda_handler(event, context):
                         });
 
                         return (
-                          <tr key={idx} className="group hover:bg-slate-50/50 transition-all">
-                            <td className="py-12 px-16 font-black text-slate-900 uppercase tracking-widest text-[12px]">
-                              {month.month === currentMonth.month ? <span className="text-blue-600 flex items-center gap-2"><Pulse size={12} className="animate-pulse" /> {month.month}</span> : month.month}
+                          <tr key={idx} className="group hover:bg-blue-50/10 transition-all border-b border-slate-50">
+                            <td className="py-12 px-16 font-black text-slate-900 uppercase tracking-widest text-[13px]">
+                              {month.month === currentMonth.month ? <span className="text-blue-600 flex items-center gap-3"><Pulse size={14} className="animate-pulse" /> {month.month}</span> : month.month}
                             </td>
-                            <td className="py-12 px-16 text-right font-mono font-black text-slate-900 text-xl">
+                            <td className="py-12 px-16 text-right font-mono font-black text-slate-900 text-2xl">
                               ${total.toLocaleString()}
                             </td>
-                            <td className="py-12 px-16 text-right">
-                              <div className="flex flex-wrap gap-3 justify-end">
-                                {breakdown.map((b, i) => (
-                                  <div key={i} className={`px-5 py-3 rounded-[24px] border-2 transition-all shadow-sm ${b.cost > 0 ? 'bg-white border-slate-300 scale-100' : 'bg-slate-50/50 border-slate-100 opacity-30'}`}>
-                                    <span className="text-[9px] font-black text-slate-500 uppercase tracking-tighter block leading-none mb-1.5">{b.label}</span>
-                                    <span className="text-[13px] font-black text-slate-900 tracking-tight block">${b.cost.toLocaleString()}</span>
-                                  </div>
-                                ))}
+                            <td className="py-12 px-8">
+                              <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-6 w-full">
+                                {breakdown.map((b, i) => {
+                                  // Parse main region and project for ledger
+                                  const splitMatch = b.label.match(/^(.*?)\s*\((.*?)\)$/);
+                                  const mainName = splitMatch ? splitMatch[1] : b.label;
+                                  const subName = splitMatch ? splitMatch[2] : '';
+
+                                  return (
+                                    <div key={i} className={`flex flex-col items-center justify-center px-6 py-6 rounded-[40px] border-2 transition-all shadow-md group/card ${b.cost > 0 ? 'bg-white border-blue-50 scale-100 hover:border-blue-300' : 'bg-slate-50/50 border-slate-100 opacity-20'}`}>
+                                      <span className="text-[14px] font-black text-slate-900 uppercase tracking-tight block text-center leading-tight mb-1">{mainName}</span>
+                                      {subName && (
+                                        <span className="text-[12px] font-bold text-blue-500 block mb-3 text-center transition-colors">({subName})</span>
+                                      )}
+                                      <span className="text-[18px] font-black text-slate-900 tracking-tighter block text-center">${b.cost.toLocaleString()}</span>
+                                    </div>
+                                  );
+                                })}
                               </div>
                             </td>
                           </tr>
