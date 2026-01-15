@@ -1,414 +1,460 @@
-import React, { useState, useMemo } from 'react';
+
+import React, { useState, useMemo, useEffect } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  PieChart, Pie, Cell 
+  AreaChart, Area
 } from 'recharts';
 import { 
   Activity, TrendingUp, DollarSign, Globe, LayoutDashboard, History,
   ArrowUpRight, ArrowDownRight, ShieldCheck, RefreshCw,
-  AlertCircle, Share2, Sparkles, ShieldAlert, FileText, ExternalLink,
-  Zap, Database, CheckCircle2
+  AlertCircle, Share2, Database, CheckCircle2, Key, Server, 
+  Lock, ChevronRight, Download, Settings, Link2, Info, X, FileJson, Zap, Copy, Terminal, Shield, Bug, AlertTriangle, ExternalLink, Settings2, Save, Search, Activity as Pulse, ZapOff, MousePointer2, Radio, Wifi, WifiOff
 } from 'lucide-react';
-import { MonthlyData, AIReportData } from './types';
-import { GoogleGenAI, Type } from "@google/genai";
+import { MonthlyData, AWSCredentials, BillingEntry } from './types';
 
-const COLORS = ['#0ea5e9', '#6366f1', '#a855f7', '#ec4899', '#f43f5e', '#f59e0b', '#10b981'];
+const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-const INITIAL_HISTORY: MonthlyData[] = [
-  { month: 'Oct 2025', entries: [
-    { region: 'Canada Central', project: 'Xray', cost: 5800 },
-    { region: 'N. Virginia', project: 'Managed Services', cost: 3100.5 },
-    { region: 'Ohio', project: 'Ricommerce Dev', cost: 1200 },
-    { region: 'Oregon', project: 'Zurchers', cost: 18.5 },
-    { region: 'Global', project: 'Tax', cost: 1450 }
-  ]},
-  { month: 'Nov 2025', entries: [
-    { region: 'Canada Central', project: 'Xray', cost: 6625.50 },
-    { region: 'N. Virginia', project: 'Managed Services', cost: 3277.74 },
-    { region: 'Ohio', project: 'Ricommerce Dev', cost: 1394.47 },
-    { region: 'Oregon', project: 'Zurchers', cost: 22.88 },
-    { region: 'Global', project: 'Tax', cost: 1661.45 }
-  ]}
+// Target regions requested by user
+const TARGET_REGIONS = [
+  { key: 'ca-central-1', label: 'Canada Central', match: ['canada', 'ca-central-1'] },
+  { key: 'us-east-1', label: 'N. Virginia', match: ['virginia', 'us-east-1'] },
+  { key: 'us-east-2', label: 'Ohio', match: ['ohio', 'us-east-2'] },
+  { key: 'us-west-2', label: 'Oregon', match: ['oregon', 'us-west-2'] },
+  { key: 'Global', label: 'Taxes / Global', match: ['tax', 'global', 'no region', 'n/a'] }
 ];
 
-interface SectionProps {
-  title: string;
-  children?: React.ReactNode;
-}
+const getCompleted12MonthLabels = () => {
+  const labels = [];
+  for (let i = 12; i >= 1; i--) {
+    const d = new Date();
+    d.setMonth(d.getMonth() - i);
+    labels.push(`${MONTH_NAMES[d.getMonth()]} ${d.getFullYear()}`);
+  }
+  return labels;
+};
 
-function Section({ title, children }: SectionProps) {
-  return (
-    <div className="bg-white rounded-[40px] border border-slate-200 overflow-hidden shadow-sm">
-      <div className="px-8 py-6 border-b border-slate-100 bg-slate-50/50 flex items-center justify-between">
-        <h2 className="text-sm font-black text-slate-900 uppercase tracking-widest flex items-center gap-2">
-          <FileText size={18} className="text-slate-400" /> {title}
-        </h2>
-      </div>
-      <div className="p-8">{children}</div>
-    </div>
-  );
-}
+const generateMock12Months = (): MonthlyData[] => {
+  const labels = getCompleted12MonthLabels();
+  return labels.map((month, i) => {
+    const isLatest = i === labels.length - 1;
+    const factor = 0.7 + (i * 0.025);
+    
+    const entries = [
+      { region: 'Canada Central', project: 'Xray', cost: isLatest ? 6625.50 : Number((4500 * factor).toFixed(2)) },
+      { region: 'N. Virginia', project: 'Managed Services', cost: isLatest ? 3277.74 : Number((2800 * factor).toFixed(2)) },
+      { region: 'Ohio', project: 'Ricommerce Dev', cost: isLatest ? 1394.47 : Number((1100 * factor).toFixed(2)) },
+      { region: 'Oregon', project: 'Zurchers', cost: isLatest ? 22.88 : Number((15 * factor).toFixed(2)) },
+      { region: 'Global', project: 'Tax', cost: isLatest ? 1661.45 : Number((1200 * factor).toFixed(2)) }
+    ];
 
-interface StatCardProps {
-  title: string;
-  value: string;
-  subtitle?: string;
-  trend?: number;
-  type?: 'default' | 'danger' | 'success';
-  icon: React.ReactNode;
-}
+    return { month, entries };
+  });
+};
 
-function StatCard({ title, value, subtitle, trend, type = 'default', icon }: StatCardProps) {
-  return (
-    <div className="bg-white p-8 rounded-[32px] border border-slate-200 shadow-sm transition-all hover:shadow-xl duration-300">
-      <div className="flex justify-between items-start mb-6">
-        <div className={`p-4 rounded-2xl ${type === 'danger' ? 'bg-rose-50 text-rose-600' : 'bg-slate-50 text-sky-600'}`}>{icon}</div>
-        {trend !== undefined && (
-          <div className={`flex items-center gap-1 text-[10px] font-black uppercase tracking-widest ${trend >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-            {trend >= 0 ? <ArrowUpRight size={14} /> : <ArrowDownRight size={14} />}
-            {Math.abs(trend).toFixed(1)}%
-          </div>
-        )}
-      </div>
-      <div>
-        <h3 className="text-slate-400 text-[10px] font-black uppercase tracking-widest mb-2">{title}</h3>
-        <p className="text-2xl font-black text-slate-900 mb-1">{value}</p>
-        {subtitle && <p className="text-[10px] text-slate-400 font-bold uppercase">{subtitle}</p>}
-      </div>
-    </div>
-  );
-}
+const encodeState = (data: MonthlyData[]) => btoa(JSON.stringify(data));
+const decodeState = (str: string): MonthlyData[] | null => {
+  try { return JSON.parse(atob(str)); } catch (e) { return null; }
+};
 
 export default function App() {
-  const [billingHistory] = useState<MonthlyData[]>(INITIAL_HISTORY);
-  const [activeTab, setActiveTab] = useState<'overview' | 'mom' | 'ai'>('overview');
-  const [isAnalyzing, setIsAnalyzing] = useState(false);
-  const [aiReport, setAiReport] = useState<AIReportData | null>(null);
+  const [billingHistory, setBillingHistory] = useState<MonthlyData[]>(generateMock12Months());
+  const [activeTab, setActiveTab] = useState<'overview' | 'trends'>('overview');
+  const [isFetching, setIsFetching] = useState(false);
+  const [showLambdaInfo, setShowLambdaInfo] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
-  
+  const [credentials, setCredentials] = useState<AWSCredentials>({
+    accessKeyId: '',
+    secretAccessKey: '',
+    region: 'us-east-1',
+    endpoint: ''
+  });
+
+  useEffect(() => {
+    const params = new URLSearchParams(window.location.search);
+    const sharedData = params.get('report');
+    if (sharedData) {
+      const decoded = decodeState(sharedData);
+      if (decoded) setBillingHistory(decoded);
+    }
+  }, []);
+
   const showToast = (message: string, type: 'success' | 'error' = 'success') => {
     setToast({ message, type });
-    setTimeout(() => setToast(null), 3000);
+    setTimeout(() => setToast(null), 8000);
   };
 
-  const currentMonth = billingHistory[billingHistory.length - 1];
-  const previousMonth = billingHistory[billingHistory.length - 2];
-  
-  const totalSpend = useMemo(() => currentMonth.entries.reduce((sum, e) => sum + e.cost, 0), [currentMonth]);
-  const prevTotalSpend = useMemo(() => previousMonth?.entries.reduce((sum, e) => sum + e.cost, 0) || 0, [previousMonth]);
-  const momPercent = prevTotalSpend > 0 ? ((totalSpend - prevTotalSpend) / prevTotalSpend) * 100 : 0;
+  const handleCopyCode = (code: string, label: string) => {
+    navigator.clipboard.writeText(code);
+    showToast(`${label} copied to clipboard!`);
+  };
 
-  const regionalMoM = useMemo(() => {
-    return currentMonth.entries.map(curr => {
-      const prev = previousMonth?.entries.find(p => p.region === curr.region);
-      const diff = prev ? curr.cost - prev.cost : 0;
-      const pct = prev ? (diff / prev.cost) * 100 : 0;
-      return { ...curr, diff, pct };
-    });
-  }, [currentMonth, previousMonth]);
+  const connectAWS = async (e: React.FormEvent) => {
+    e.preventDefault();
+    const cleanEndpoint = credentials.endpoint?.trim();
+    if (!cleanEndpoint) {
+      showToast("Please enter your Lambda Function URL.", "error");
+      return;
+    }
 
-  const generateAIReport = async () => {
-    setIsAnalyzing(true);
+    setIsFetching(true);
     try {
-      // Create a new instance right before use to ensure the latest API key is used
-      const ai = new GoogleGenAI({ apiKey: process.env.API_KEY });
-      const prompt = `Perform a deep Month-Over-Month (MoM) analysis on this AWS Billing data: ${JSON.stringify(billingHistory)}. 
-      Highlight Canada Central ($6,625.50), N. Virginia ($3,277.74), and Ohio ($1,394.47). 
-      Identify why costs spiked in Canada, find any anomalies, and provide 3 priority cost-saving actions.`;
-
-      const response = await ai.models.generateContent({
-        model: "gemini-3-pro-preview",
-        contents: prompt,
-        config: {
-          responseMimeType: "application/json",
-          responseSchema: {
-            type: Type.OBJECT,
-            properties: {
-              varianceSummary: { type: Type.STRING },
-              regionalDrivers: { 
-                type: Type.ARRAY, 
-                items: { 
-                  type: Type.OBJECT,
-                  properties: { region: { type: Type.STRING }, reason: { type: Type.STRING } }
-                }
-              },
-              anomalies: { type: Type.ARRAY, items: { type: Type.STRING } },
-              recommendations: { 
-                type: Type.ARRAY, 
-                items: { 
-                  type: Type.OBJECT,
-                  properties: { 
-                    action: { type: Type.STRING }, 
-                    priority: { type: Type.STRING },
-                    impact: { type: Type.STRING }
-                  }
-                } 
-              },
-              optimizationScore: { type: Type.NUMBER }
-            },
-            required: ["varianceSummary", "regionalDrivers", "anomalies", "recommendations", "optimizationScore"]
-          }
-        }
+      const response = await fetch(cleanEndpoint, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({
+          accessKeyId: credentials.accessKeyId,
+          secretAccessKey: credentials.secretAccessKey,
+          region: credentials.region
+        })
       });
 
-      const result = JSON.parse(response.text || '{}');
-      setAiReport(result);
-      showToast("AI Intelligence Report Generated");
-    } catch (err) {
-      console.error(err);
-      showToast("AI analysis failed.", "error");
+      if (!response.ok) throw new Error(`AWS Status ${response.status}`);
+      const data = await response.json();
+      setBillingHistory(data);
+      showToast("Real-time Data Synced!");
+    } catch (err: any) {
+      showToast(`Sync Failed: ${err.message}`, "error");
     } finally {
-      setIsAnalyzing(false);
+      setIsFetching(false);
     }
   };
 
+  const handleShare = () => {
+    const encoded = encodeState(billingHistory);
+    const url = new URL(window.location.href);
+    url.searchParams.set('report', encoded);
+    navigator.clipboard.writeText(url.toString());
+    showToast("Dashboard link copied!");
+  };
+
+  const currentMonth = billingHistory[billingHistory.length - 1];
+  
+  // FILTER AND SORT REGIONS FOR BAR CHART
+  const filteredSortedRegions = useMemo(() => {
+    return currentMonth.entries
+      .filter(e => {
+        const name = e.region.toLowerCase();
+        return TARGET_REGIONS.some(target => 
+          target.match.some(keyword => name.includes(keyword))
+        );
+      })
+      .sort((a, b) => a.cost - b.cost); // Ascending order
+  }, [currentMonth]);
+
+  const totalSpend = useMemo(() => currentMonth.entries.reduce((sum, e) => sum + e.cost, 0), [currentMonth]);
+  const previousMonth = billingHistory[billingHistory.length - 2];
+  const prevTotalSpend = useMemo(() => previousMonth?.entries.reduce((sum, e) => sum + e.cost, 0) || 0, [previousMonth]);
+  const momPercent = prevTotalSpend > 0 ? ((totalSpend - prevTotalSpend) / prevTotalSpend) * 100 : 0;
+
+  const lambdaCode = `import json
+import boto3
+from datetime import datetime, timedelta
+
+def lambda_handler(event, context):
+    try:
+        # Handle simple GET test
+        if event.get('requestContext', {}).get('http', {}).get('method') == 'GET':
+            return {'statusCode': 200, 'body': json.dumps({"status": "online"})}
+
+        body = json.loads(event.get('body', '{}')) if event.get('body') else {}
+        ak = body.get('accessKeyId')
+        sk = body.get('secretAccessKey')
+        reg = body.get('region', 'us-east-1')
+
+        client_args = {'region_name': reg}
+        if ak and sk:
+            client_args.update({'aws_access_key_id': ak, 'aws_secret_access_key': sk})
+        
+        ce = boto3.client('ce', **client_args)
+
+        end = datetime.now().replace(day=1)
+        start = (end - timedelta(days=365)).replace(day=1)
+        
+        res = ce.get_cost_and_usage(
+            TimePeriod={'Start': start.strftime('%Y-%m-%d'), 'End': end.strftime('%Y-%m-%d')},
+            Granularity='MONTHLY', 
+            Metrics=['UnblendedCost'],
+            GroupBy=[{'Type': 'DIMENSION', 'Key': 'REGION'}]
+        )
+
+        output = []
+        for p in res['ResultsByTime']:
+            lbl = datetime.strptime(p['TimePeriod']['Start'], '%Y-%m-%d').strftime('%b %Y')
+            ents = []
+            for g in p['Groups']:
+                raw_region = g['Keys'][0]
+                # Map empty regions or 'No Region' to 'Global' to ensure Taxes are caught
+                region_name = raw_region if raw_region and raw_region != "No Region" else "Global"
+                cost = round(float(g['Metrics']['UnblendedCost']['Amount']), 2)
+                ents.append({"region": region_name, "project": "Infrastructure", "cost": cost})
+            output.append({"month": lbl, "entries": ents})
+
+        return {'statusCode': 200, 'body': json.dumps(output)}
+
+    except Exception as e:
+        return {'statusCode': 500, 'body': json.dumps({"error": str(e)})}`;
+
   return (
-    <div className="min-h-screen bg-slate-50 flex flex-col font-sans">
-      {toast && (
-        <div className={`fixed top-20 right-4 z-[200] px-6 py-3 rounded-2xl shadow-xl flex items-center gap-3 border ${
-          toast.type === 'success' ? 'bg-emerald-600 text-white border-emerald-500' : 'bg-rose-600 text-white border-rose-500'
-        }`}>
-          {toast.type === 'success' ? <CheckCircle2 size={18} /> : <AlertCircle size={18} />}
-          <span className="text-sm font-bold">{toast.message}</span>
+    <div className="min-h-screen bg-[#f8fafc] flex font-sans text-slate-900">
+      {/* Troubleshooting Diagnostic Modal */}
+      {showLambdaInfo && (
+        <div className="fixed inset-0 bg-slate-900/90 backdrop-blur-2xl z-[200] flex items-center justify-center p-6">
+          <div className="bg-white rounded-[48px] w-full max-w-4xl p-12 shadow-2xl border border-slate-200 overflow-y-auto max-h-[90vh]">
+            <div className="flex justify-between items-start mb-10">
+              <div className="flex flex-col">
+                <div className="flex items-center gap-3 mb-2">
+                   <div className="bg-blue-600 p-2 rounded-xl text-white"><Settings2 size={24} /></div>
+                   <h2 className="text-2xl font-black tracking-tight">System Configuration</h2>
+                </div>
+                <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">Connectivity and Optimization</p>
+              </div>
+              <button onClick={() => setShowLambdaInfo(false)} className="p-3 hover:bg-slate-100 rounded-2xl transition-all"><X size={24}/></button>
+            </div>
+            
+            <div className="space-y-8">
+              <div className="bg-slate-900 p-10 rounded-[40px] text-white">
+                <div className="flex items-center justify-between mb-6">
+                   <h3 className="text-[12px] font-black uppercase tracking-widest flex items-center gap-2">
+                     <Terminal size={18} className="text-blue-400" /> Refined Lambda Script
+                   </h3>
+                   <button onClick={() => handleCopyCode(lambdaCode, "Refined Lambda Code")} className="px-6 py-3 bg-blue-600 rounded-xl text-[10px] font-black uppercase flex items-center gap-2">
+                     <Copy size={14} /> Copy Code
+                   </button>
+                </div>
+                <p className="text-[11px] text-slate-400 mb-6">This version ensures costs from "No Region" (like Taxes) are correctly labeled as "Global" for the dashboard to pick up.</p>
+                <div className="bg-slate-800/50 p-6 rounded-2xl overflow-x-auto max-h-[300px]">
+                  <pre className="text-emerald-400 font-mono text-[11px]">{lambdaCode}</pre>
+                </div>
+              </div>
+
+              <div className="bg-slate-50 p-10 rounded-[40px] border border-slate-200">
+                <h3 className="text-[12px] font-black uppercase tracking-widest mb-4">IAM Cost Explorer Policy</h3>
+                <div className="bg-white p-8 rounded-[32px] text-slate-700 font-mono text-[11px] border border-slate-200 shadow-sm">
+                  <pre>{`{
+  "Version": "2012-10-17",
+  "Statement": [
+    {
+      "Effect": "Allow",
+      "Action": ["ce:GetCostAndUsage"],
+      "Resource": "*"
+    }
+  ]
+}`}</pre>
+                </div>
+              </div>
+            </div>
+          </div>
         </div>
       )}
 
-      <header className="bg-white/80 backdrop-blur-md border-b border-slate-200 sticky top-0 z-50">
-        <div className="max-w-7xl mx-auto px-4 h-16 flex items-center justify-between">
-          <div className="flex items-center gap-3">
-            <div className="bg-slate-900 p-2 rounded-xl text-white shadow-lg shadow-slate-200">
-              <Activity size={24} />
-            </div>
+      {/* Toast */}
+      {toast && (
+        <div className={`fixed bottom-10 left-1/2 -translate-x-1/2 z-[100] px-10 py-6 rounded-[40px] shadow-2xl flex items-center gap-5 animate-in slide-in-from-bottom duration-500 border ${
+          toast.type === 'success' ? 'bg-slate-900 text-white border-slate-700' : 'bg-rose-600 text-white border-rose-500'
+        }`}>
+          {toast.type === 'success' ? <CheckCircle2 size={24} className="text-emerald-400" /> : <AlertTriangle size={24} />}
+          <span className="text-[14px] font-black tracking-tight">{toast.message}</span>
+        </div>
+      )}
+
+      {/* Sidebar */}
+      <aside className="w-84 bg-white border-r border-slate-200 flex flex-col sticky top-0 h-screen shrink-0 shadow-sm overflow-y-auto">
+        <div className="p-8">
+          <div className="flex items-center gap-3 mb-10">
+            <div className="bg-blue-600 p-3 rounded-2xl text-white shadow-xl shadow-blue-100"><Activity size={24} strokeWidth={2.5} /></div>
             <div>
-              <h1 className="text-xl font-black text-slate-900 tracking-tight">CloudSpend AI</h1>
-              <p className="text-[10px] text-slate-400 font-bold uppercase tracking-widest">Enterprise Hub</p>
+              <h1 className="text-lg font-black tracking-tight leading-none">CloudSpend</h1>
+              <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 underline decoration-blue-500 decoration-2 underline-offset-4">Enterprise Hub</span>
             </div>
           </div>
-          
+
+          <nav className="space-y-1">
+            <button onClick={() => setActiveTab('overview')} className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl text-sm font-bold transition-all ${activeTab === 'overview' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}>
+              <LayoutDashboard size={20} /> Dashboard
+            </button>
+            <button onClick={() => setActiveTab('trends')} className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl text-sm font-bold transition-all ${activeTab === 'trends' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}>
+              <TrendingUp size={20} /> 12M History
+            </button>
+          </nav>
+        </div>
+
+        <div className="mt-auto p-6">
+          <div className="bg-slate-900 rounded-[40px] p-8 shadow-2xl border border-slate-800">
+            <div className="flex items-center justify-between mb-6">
+              <div className="flex items-center gap-2 text-white font-black text-[10px] uppercase tracking-widest"><Server size={14} className="text-blue-400" /> Connection</div>
+              <button onClick={() => setShowLambdaInfo(true)} className="text-blue-400 hover:text-blue-300 transition-colors"><Settings2 size={14} /></button>
+            </div>
+            <form onSubmit={connectAWS} className="space-y-4">
+              <div className="relative group">
+                <Key className="absolute left-4 top-4 text-slate-500" size={16} />
+                <input type="text" placeholder="Access Key ID" className="w-full pl-12 pr-4 py-4 bg-slate-800/50 border border-slate-700 rounded-2xl text-[11px] font-bold text-white focus:ring-2 focus:ring-blue-500 outline-none placeholder:text-slate-600" value={credentials.accessKeyId} onChange={e => setCredentials({...credentials, accessKeyId: e.target.value})} />
+              </div>
+              <div className="relative group">
+                <Link2 className="absolute left-4 top-4 text-slate-500" size={16} />
+                <input type="text" placeholder="Lambda URL" className="w-full pl-12 pr-4 py-4 bg-slate-800/50 border border-slate-700 rounded-2xl text-[11px] font-bold text-white focus:ring-2 focus:ring-blue-500 outline-none placeholder:text-slate-600" value={credentials.endpoint} onChange={e => setCredentials({...credentials, endpoint: e.target.value})} />
+              </div>
+              <button type="submit" disabled={isFetching} className="w-full py-5 bg-blue-600 text-white rounded-[24px] text-[11px] font-black uppercase tracking-widest hover:bg-blue-500 transition-all flex items-center justify-center gap-3 disabled:opacity-50 shadow-lg shadow-blue-900/40">
+                {isFetching ? <RefreshCw className="animate-spin" size={16} /> : <><Pulse size={16}/> Sync Data</>}
+              </button>
+            </form>
+          </div>
+        </div>
+      </aside>
+
+      <main className="flex-1 overflow-y-auto">
+        <header className="h-24 border-b border-slate-200 bg-white/80 backdrop-blur-2xl sticky top-0 z-40 px-12 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <button className="flex items-center gap-2 px-5 py-2.5 bg-slate-900 text-white rounded-xl text-sm font-bold hover:bg-slate-800 transition-all shadow-xl shadow-slate-900/10 active:scale-95">
-              <Share2 size={16} /> Share Report
-            </button>
+            <span className="text-slate-400 font-bold text-[11px] uppercase tracking-widest">Enterprise Analytics</span>
+            <ChevronRight size={16} className="text-slate-200" />
+            <span className="text-slate-900 font-black text-[11px] uppercase tracking-widest bg-slate-100 px-4 py-2 rounded-full">{activeTab}</span>
           </div>
-        </div>
-      </header>
+          <button onClick={handleShare} className="flex items-center gap-3 px-8 py-4 bg-slate-900 text-white rounded-3xl text-[11px] font-black uppercase tracking-widest hover:bg-slate-800 transition-all shadow-2xl">
+            <Share2 size={18} /> Share Dashboard
+          </button>
+        </header>
 
-      <main className="flex-1 max-w-7xl mx-auto w-full px-4 py-8">
-        <div className="flex gap-1 bg-slate-200/50 p-1 rounded-2xl w-fit mb-8 shadow-inner">
-          {[
-            { id: 'overview', icon: LayoutDashboard, label: 'Overview' },
-            { id: 'mom', icon: History, label: 'Trend Hub' },
-            { id: 'ai', icon: Sparkles, label: 'AI Intelligence' }
-          ].map(tab => (
-            <button
-              key={tab.id}
-              onClick={() => setActiveTab(tab.id as any)}
-              className={`flex items-center gap-2 px-8 py-3 rounded-xl text-sm font-bold transition-all ${
-                activeTab === tab.id ? 'bg-white text-slate-900 shadow-md' : 'text-slate-500 hover:text-slate-700'
-              }`}
-            >
-              <tab.icon size={18} /> {tab.label}
-            </button>
-          ))}
-        </div>
-
-        {activeTab === 'overview' && (
-          <div className="space-y-8 animate-in fade-in duration-500">
-            <div className="grid grid-cols-1 md:grid-cols-4 gap-6">
-              <StatCard title="Nov Total" value={`$${totalSpend.toLocaleString()}`} trend={momPercent} icon={<DollarSign />} />
-              <StatCard title="MoM Variance" value={`$${(totalSpend - prevTotalSpend).toLocaleString()}`} type={totalSpend > prevTotalSpend ? 'danger' : 'success'} icon={<TrendingUp />} />
-              <StatCard title="Peak Region" value="Canada Central" subtitle="Xray Project" icon={<Globe />} />
-              <StatCard title="Active Regions" value="5" subtitle="Service Footprint" icon={<Database />} />
+        <div className="p-12 max-w-7xl mx-auto space-y-12">
+          {/* Summary Cards */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
+            <div className="bg-white p-12 rounded-[64px] border border-slate-200 shadow-sm relative group overflow-hidden">
+              <div className="absolute -top-6 -right-6 p-12 opacity-[0.03] text-blue-600"><DollarSign size={160} /></div>
+              <div className="flex justify-between items-start mb-8">
+                <div className="p-5 bg-blue-50 text-blue-600 rounded-[32px] shadow-sm"><DollarSign size={32} /></div>
+                <div className={`flex items-center gap-2 text-[11px] font-black px-5 py-2.5 rounded-2xl ${momPercent >= 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                  {momPercent >= 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
+                  {Math.abs(momPercent).toFixed(1)}% MoM
+                </div>
+              </div>
+              <h3 className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-2">{currentMonth.month} Total</h3>
+              <p className="text-6xl font-black text-slate-900 tracking-tighter">${totalSpend.toLocaleString()}</p>
             </div>
 
-            <div className="grid grid-cols-1 lg:grid-cols-2 gap-8">
-              <Section title="Spend Distribution by Region">
-                <div className="h-[350px]">
+            <div className="bg-white p-12 rounded-[64px] border border-slate-200 shadow-sm relative overflow-hidden group">
+              <div className="absolute -top-6 -right-6 p-12 opacity-[0.03] text-purple-600"><Globe size={160} /></div>
+              <div className="flex justify-between items-start mb-8">
+                <div className="p-5 bg-purple-50 text-purple-600 rounded-[32px] shadow-sm"><Globe size={32} /></div>
+              </div>
+              <h3 className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-2">Dominant Region</h3>
+              <p className="text-3xl font-black text-slate-900 tracking-tight">Canada Central</p>
+              <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest mt-3 flex items-center gap-2">
+                 <span className="w-2 h-2 bg-purple-500 rounded-full animate-ping" />
+                 Peak Load • ${filteredSortedRegions[filteredSortedRegions.length - 1]?.cost.toLocaleString() || '0'}
+              </p>
+            </div>
+
+            <div className="bg-white p-12 rounded-[64px] border border-slate-200 shadow-sm">
+              <div className="flex justify-between items-start mb-8">
+                <div className="p-5 bg-emerald-50 text-emerald-600 rounded-[32px] shadow-sm"><ShieldCheck size={32} /></div>
+              </div>
+              <h3 className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-2">System Insight</h3>
+              <p className="text-3xl font-black text-slate-900 tracking-tight">Tracking {filteredSortedRegions.length} Core Regions</p>
+              <div className="w-full bg-slate-100 h-4 rounded-full mt-8 overflow-hidden shadow-inner p-1">
+                <div className="bg-emerald-500 h-full rounded-full transition-all duration-1500" style={{ width: '100%' }} />
+              </div>
+            </div>
+          </div>
+
+          {activeTab === 'overview' && (
+            <div className="animate-in fade-in slide-in-from-bottom-8 duration-700">
+              <div className="bg-white rounded-[72px] border border-slate-200 p-16 shadow-sm">
+                <div className="flex flex-col md:flex-row md:items-center justify-between mb-16 gap-6">
+                  <div>
+                    <h2 className="text-[13px] font-black uppercase tracking-[0.2em] flex items-center gap-4">
+                      <span className="w-4 h-4 bg-blue-500 rounded-full animate-pulse shadow-[0_0_20px_rgba(59,130,246,0.5)]" />
+                      Priority Regional Load
+                    </h2>
+                    <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-2">Cost Volume (Ascending)</p>
+                  </div>
+                  <div className="flex flex-wrap gap-2">
+                    {TARGET_REGIONS.map(r => (
+                      <span key={r.key} className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-full text-[9px] font-black text-slate-400 uppercase tracking-widest">{r.label}</span>
+                    ))}
+                  </div>
+                </div>
+                <div className="h-[500px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={currentMonth.entries}>
+                    <BarChart data={filteredSortedRegions}>
+                      <defs>
+                        <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
+                          <stop offset="0%" stopColor="#3b82f6" stopOpacity={1}/><stop offset="100%" stopColor="#6366f1" stopOpacity={0.8}/>
+                        </linearGradient>
+                      </defs>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                      <XAxis dataKey="region" fontSize={11} stroke="#94a3b8" axisLine={false} tickLine={false} dy={10} />
-                      <YAxis tickFormatter={(val) => `$${val}`} stroke="#94a3b8" fontSize={11} axisLine={false} tickLine={false} />
-                      <Tooltip 
-                        cursor={{ fill: '#f8fafc' }}
-                        contentStyle={{ borderRadius: '16px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)' }}
-                      />
-                      <Bar dataKey="cost" fill="#0ea5e9" radius={[6, 6, 0, 0]} barSize={40} />
+                      <XAxis dataKey="region" fontSize={11} stroke="#cbd5e1" axisLine={false} tickLine={false} dy={20} fontWeight="black" />
+                      <YAxis tickFormatter={(val) => `$${val.toLocaleString()}`} stroke="#cbd5e1" fontSize={11} axisLine={false} tickLine={false} fontWeight="black" />
+                      <Tooltip cursor={{ fill: '#f8fafc', radius: 32 }} contentStyle={{ borderRadius: '48px', border: 'none', boxShadow: '0 40px 100px -20px rgb(0 0 0 / 0.3)', padding: '32px' }} />
+                      <Bar dataKey="cost" fill="url(#barGradient)" radius={[24, 24, 0, 0]} barSize={80} />
                     </BarChart>
                   </ResponsiveContainer>
                 </div>
-              </Section>
-
-              <Section title="Cost Allocation Overview">
-                <div className="h-[350px]">
-                  <ResponsiveContainer width="100%" height="100%">
-                    <PieChart>
-                      <Pie
-                        data={currentMonth.entries}
-                        dataKey="cost"
-                        nameKey="region"
-                        cx="50%"
-                        cy="50%"
-                        innerRadius={90}
-                        outerRadius={120}
-                        paddingAngle={5}
-                      >
-                        {currentMonth.entries.map((_, index) => (
-                          <Cell key={`cell-${index}`} fill={COLORS[index % COLORS.length]} />
-                        ))}
-                      </Pie>
-                      <Tooltip contentStyle={{ borderRadius: '16px', border: 'none' }} />
-                    </PieChart>
-                  </ResponsiveContainer>
-                </div>
-              </Section>
+              </div>
             </div>
-          </div>
-        )}
+          )}
 
-        {activeTab === 'mom' && (
-          <div className="space-y-8 animate-in fade-in duration-500">
-            <Section title="Month-Over-Month Variance (Oct vs Nov)">
-              <div className="overflow-x-auto">
-                <table className="w-full text-left border-collapse">
-                  <thead>
-                    <tr className="border-b border-slate-100 text-slate-400 text-[10px] font-black uppercase tracking-widest">
-                      <th className="py-6 px-4">Region / Project</th>
-                      <th className="py-6 px-4 text-right">Oct Cost</th>
-                      <th className="py-6 px-4 text-right">Nov Cost</th>
-                      <th className="py-6 px-4 text-right">Variance ($)</th>
-                      <th className="py-6 px-4 text-right">Variance (%)</th>
-                    </tr>
-                  </thead>
-                  <tbody className="divide-y divide-slate-50">
-                    {regionalMoM.map((row, idx) => {
-                      // Added safe navigation for previousMonth entries access
-                      const prev = previousMonth?.entries.find(p => p.region === row.region)?.cost || 0;
-                      return (
-                        <tr key={idx} className="hover:bg-slate-50 transition-colors">
-                          <td className="py-5 px-4">
-                            <div className="font-bold text-slate-700">{row.region}</div>
-                            <div className="text-[10px] text-slate-400 font-bold uppercase">{row.project}</div>
-                          </td>
-                          <td className="py-5 px-4 text-right font-mono font-bold text-slate-400">${prev.toLocaleString()}</td>
-                          <td className="py-5 px-4 text-right font-mono font-bold text-slate-900">${row.cost.toLocaleString()}</td>
-                          <td className={`py-5 px-4 text-right font-mono font-bold ${row.diff >= 0 ? 'text-rose-600' : 'text-emerald-600'}`}>
-                            {row.diff >= 0 ? '+' : ''}${Math.abs(row.diff).toLocaleString()}
-                          </td>
-                          <td className="py-5 px-4 text-right">
-                            <span className={`px-3 py-1 rounded-full text-[10px] font-black ${row.pct >= 0 ? 'bg-rose-50 text-rose-700' : 'bg-emerald-50 text-emerald-700'}`}>
-                              {row.pct >= 0 ? '+' : ''}{row.pct.toFixed(1)}%
-                            </span>
-                          </td>
-                        </tr>
-                      );
-                    })}
-                  </tbody>
-                </table>
-              </div>
-            </Section>
-          </div>
-        )}
-
-        {activeTab === 'ai' && (
-          <div className="space-y-8 animate-in fade-in duration-500">
-            {!aiReport && !isAnalyzing ? (
-              <div className="bg-white border-2 border-dashed border-slate-200 rounded-[40px] p-20 flex flex-col items-center text-center">
-                <div className="bg-sky-50 p-6 rounded-[32px] text-sky-600 mb-6">
-                  <Sparkles size={48} />
-                </div>
-                <h3 className="text-2xl font-black text-slate-900 mb-2">Run Intelligence Scan</h3>
-                <p className="text-slate-500 max-w-md mb-8 font-medium">Detect regional drivers, anomalies, and cost-saving opportunities.</p>
-                <button 
-                  onClick={generateAIReport}
-                  className="px-10 py-4 bg-sky-600 text-white rounded-[20px] font-bold hover:bg-sky-700 transition-all shadow-xl shadow-sky-600/20 active:scale-95 flex items-center gap-3"
-                >
-                  <Sparkles size={20} /> Analyze Now
-                </button>
-              </div>
-            ) : isAnalyzing ? (
-              <div className="bg-white rounded-[40px] p-20 flex flex-col items-center text-center">
-                <RefreshCw className="animate-spin text-sky-600 mb-6" size={48} />
-                <h3 className="text-xl font-black text-slate-900 mb-2">AI is Thinking...</h3>
-                <p className="text-slate-500 font-medium">Processing regional data points.</p>
-              </div>
-            ) : (
-              <div className="grid grid-cols-1 lg:grid-cols-3 gap-8">
-                <div className="lg:col-span-2 space-y-8">
-                  <Section title="AI Summary">
-                    <p className="text-slate-700 leading-relaxed font-bold bg-slate-50 p-6 rounded-2xl border border-slate-100 italic">
-                      "{aiReport?.varianceSummary}"
-                    </p>
-                    <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mt-8">
-                      <div className="p-6 bg-rose-50 border border-rose-100 rounded-3xl">
-                        <div className="flex items-center gap-2 text-rose-600 font-black text-[10px] uppercase tracking-widest mb-4">
-                          <ShieldAlert size={16} /> Anomalies detected
-                        </div>
-                        <ul className="space-y-3">
-                          {aiReport?.anomalies.map((a, i) => (
-                            <li key={i} className="text-sm font-bold text-rose-900 flex items-start gap-2">
-                              <div className="w-1.5 h-1.5 rounded-full bg-rose-400 mt-1.5 shrink-0" />
-                              {a}
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                      <div className="p-6 bg-sky-50 border border-sky-100 rounded-3xl">
-                        <div className="flex items-center gap-2 text-sky-600 font-black text-[10px] uppercase tracking-widest mb-4">
-                          <TrendingUp size={16} /> regional drivers
-                        </div>
-                        <ul className="space-y-4">
-                          {aiReport?.regionalDrivers.map((d, i) => (
-                            <li key={i} className="space-y-1">
-                              <div className="text-[10px] font-black text-sky-900 uppercase">{d.region}</div>
-                              <div className="text-[11px] font-bold text-sky-700">{d.reason}</div>
-                            </li>
-                          ))}
-                        </ul>
-                      </div>
-                    </div>
-                  </Section>
-                </div>
-                <div className="space-y-8">
-                  <div className="bg-slate-950 rounded-[32px] p-10 text-white relative overflow-hidden shadow-2xl">
-                    <div className="relative z-10">
-                      <h4 className="text-[10px] font-black uppercase tracking-widest text-slate-500 mb-4">Optimization Score</h4>
-                      <div className="text-7xl font-black mb-4 tracking-tighter">{aiReport?.optimizationScore}%</div>
-                      <p className="text-sm text-slate-400 font-bold leading-relaxed">Account efficiency has shifted since last month. Follow the actions below.</p>
-                    </div>
-                    <Sparkles className="absolute -right-20 -bottom-20 text-slate-900 opacity-50" size={300} />
+          {activeTab === 'trends' && (
+            <div className="animate-in fade-in slide-in-from-bottom-8 duration-700">
+              <div className="bg-white rounded-[72px] border border-slate-200 overflow-hidden shadow-sm">
+                <div className="px-16 py-16 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
+                  <div>
+                    <h2 className="text-[14px] font-black uppercase tracking-[0.3em] flex items-center gap-4 mb-2">
+                      <Database size={24} className="text-blue-500" /> Historical Billing Ledger
+                    </h2>
+                    <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">Aggregate & Regional Cost Breakdown</p>
                   </div>
-                  <Section title="Recommended Actions">
-                    <div className="space-y-4">
-                      {aiReport?.recommendations.map((r, i) => (
-                        <div key={i} className="p-4 bg-white border border-slate-100 rounded-2xl hover:border-sky-500 transition-all shadow-sm">
-                          <div className="flex justify-between items-start mb-2">
-                            <span className={`px-2 py-0.5 rounded-lg text-[8px] font-black uppercase tracking-widest ${
-                              r.priority === 'High' ? 'bg-rose-600 text-white' : 'bg-sky-600 text-white'
-                            }`}>{r.priority}</span>
-                            <span className="text-[10px] font-black text-emerald-600 uppercase">{r.impact} impact</span>
-                          </div>
-                          <div className="text-sm font-bold text-slate-900 leading-tight">{r.action}</div>
-                        </div>
-                      ))}
-                    </div>
-                  </Section>
+                </div>
+                
+                <div className="overflow-x-auto">
+                  <table className="w-full text-left">
+                    <thead>
+                      <tr className="text-[11px] font-black uppercase tracking-widest text-slate-400 bg-slate-50/80">
+                        <th className="py-12 px-16">Fiscal Period</th>
+                        <th className="py-12 px-16 text-right">Aggregate Spend</th>
+                        <th className="py-12 px-16 text-right">Cost Per Region (Taxes Included)</th>
+                      </tr>
+                    </thead>
+                    <tbody className="divide-y divide-slate-100">
+                      {[...billingHistory].reverse().map((month, idx) => {
+                        const total = month.entries.reduce((s, e) => s + e.cost, 0);
+                        
+                        // Intelligent region matching for the ledger breakdown
+                        const breakdown = TARGET_REGIONS.map(target => {
+                          // Find any entries that match our target region keywords
+                          const entry = month.entries.find(e => {
+                            const regionLower = e.region.toLowerCase();
+                            return target.match.some(keyword => regionLower.includes(keyword));
+                          });
+                          return { label: target.label, cost: entry?.cost || 0 };
+                        });
+
+                        return (
+                          <tr key={idx} className="group hover:bg-slate-50/50 transition-all">
+                            <td className="py-12 px-16 font-black text-slate-900 uppercase tracking-widest text-[12px]">
+                              {month.month === currentMonth.month ? <span className="text-blue-600 font-black flex items-center gap-2"><Pulse size={12} className="animate-pulse" /> {month.month}</span> : month.month}
+                            </td>
+                            <td className="py-12 px-16 text-right font-mono font-black text-slate-900 text-lg">
+                              ${total.toLocaleString()}
+                            </td>
+                            <td className="py-12 px-16 text-right">
+                              <div className="flex flex-wrap gap-2 justify-end">
+                                {breakdown.map((b, i) => (
+                                  <div key={i} className={`px-4 py-2 rounded-2xl border transition-all ${b.cost > 0 ? 'bg-slate-100 border-slate-200' : 'bg-slate-50/50 border-slate-100 opacity-50'}`}>
+                                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter block leading-none mb-1">{b.label}</span>
+                                    <span className="text-[11px] font-black text-slate-700 tracking-tight">${b.cost.toLocaleString()}</span>
+                                  </div>
+                                ))}
+                              </div>
+                            </td>
+                          </tr>
+                        );
+                      })}
+                    </tbody>
+                  </table>
                 </div>
               </div>
-            )}
-          </div>
-        )}
-      </main>
-
-      <footer className="bg-white border-t border-slate-200 py-10 mt-auto">
-        <div className="max-w-7xl mx-auto px-4 flex flex-col md:flex-row justify-between items-center gap-6">
-          <div className="flex items-center gap-4">
-             <div className="p-2 bg-slate-900 rounded-lg text-white"><ShieldCheck size={18} /></div>
-             <p className="text-slate-400 text-[10px] font-black uppercase tracking-widest">Enterprise Shield • Google Gemini 3.0</p>
-          </div>
-          <a href="https://ai.google.dev" target="_blank" rel="noreferrer" className="text-[10px] font-black text-slate-400 uppercase tracking-widest hover:text-sky-600 flex items-center gap-2">Gemini Engine <ExternalLink size={12} /></a>
+            </div>
+          )}
         </div>
-      </footer>
+      </main>
     </div>
   );
 }
