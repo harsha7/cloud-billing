@@ -14,7 +14,7 @@ import { MonthlyData, AWSCredentials, BillingEntry } from './types';
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-// Target regions requested by user
+// Target regions requested by user with fuzzy matching keywords
 const TARGET_REGIONS = [
   { key: 'ca-central-1', label: 'Canada Central', match: ['canada', 'ca-central-1'] },
   { key: 'us-east-1', label: 'N. Virginia', match: ['virginia', 'us-east-1'] },
