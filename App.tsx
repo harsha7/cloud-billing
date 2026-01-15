@@ -1,20 +1,19 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, 
-  AreaChart, Area
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer 
 } from 'recharts';
 import { 
   Activity, TrendingUp, DollarSign, Globe, LayoutDashboard, History,
   ArrowUpRight, ArrowDownRight, ShieldCheck, RefreshCw,
   AlertCircle, Share2, Database, CheckCircle2, Key, Server, 
-  Lock, ChevronRight, Download, Settings, Link2, Info, X, FileJson, Zap, Copy, Terminal, Shield, Bug, AlertTriangle, ExternalLink, Settings2, Save, Search, Activity as Pulse, ZapOff, MousePointer2, Radio, Wifi, WifiOff
+  ChevronRight, X, Copy, Terminal, Settings2, Activity as Pulse, AlertTriangle, Link2
 } from 'lucide-react';
-import { MonthlyData, AWSCredentials, BillingEntry } from './types';
+import { MonthlyData, AWSCredentials } from './types';
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
-// Target regions requested by user with fuzzy matching keywords
+// Target regions in STRICT ORDER requested by user
 const TARGET_REGIONS = [
   { key: 'ca-central-1', label: 'Canada Central', match: ['canada', 'ca-central-1'] },
   { key: 'us-east-1', label: 'N. Virginia', match: ['virginia', 'us-east-1'] },
@@ -129,16 +128,21 @@ export default function App() {
 
   const currentMonth = billingHistory[billingHistory.length - 1];
   
-  // FILTER AND SORT REGIONS FOR BAR CHART
-  const filteredSortedRegions = useMemo(() => {
-    return currentMonth.entries
-      .filter(e => {
-        const name = e.region.toLowerCase();
-        return TARGET_REGIONS.some(target => 
-          target.match.some(keyword => name.includes(keyword))
-        );
-      })
-      .sort((a, b) => a.cost - b.cost); // Ascending order
+  // FILTER AND SORT REGIONS IN STRICT REQUESTED ORDER
+  const orderedRegions = useMemo(() => {
+    const matched = currentMonth.entries.filter(e => {
+      const name = e.region.toLowerCase();
+      return TARGET_REGIONS.some(target => 
+        target.match.some(keyword => name.includes(keyword))
+      );
+    });
+
+    // Sort based on the index in TARGET_REGIONS
+    return matched.sort((a, b) => {
+      const indexA = TARGET_REGIONS.findIndex(t => t.match.some(k => a.region.toLowerCase().includes(k)));
+      const indexB = TARGET_REGIONS.findIndex(t => t.match.some(k => b.region.toLowerCase().includes(k)));
+      return indexA - indexB;
+    });
   }, [currentMonth]);
 
   const totalSpend = useMemo(() => currentMonth.entries.reduce((sum, e) => sum + e.cost, 0), [currentMonth]);
@@ -183,7 +187,6 @@ def lambda_handler(event, context):
             ents = []
             for g in p['Groups']:
                 raw_region = g['Keys'][0]
-                # Map empty regions or 'No Region' to 'Global' to ensure Taxes are caught
                 region_name = raw_region if raw_region and raw_region != "No Region" else "Global"
                 cost = round(float(g['Metrics']['UnblendedCost']['Amount']), 2)
                 ents.append({"region": region_name, "project": "Infrastructure", "cost": cost})
@@ -212,7 +215,7 @@ def lambda_handler(event, context):
             </div>
             
             <div className="space-y-8">
-              <div className="bg-slate-900 p-10 rounded-[40px] text-white">
+              <div className="bg-slate-900 p-10 rounded-[40px] text-white shadow-2xl">
                 <div className="flex items-center justify-between mb-6">
                    <h3 className="text-[12px] font-black uppercase tracking-widest flex items-center gap-2">
                      <Terminal size={18} className="text-blue-400" /> Refined Lambda Script
@@ -221,25 +224,8 @@ def lambda_handler(event, context):
                      <Copy size={14} /> Copy Code
                    </button>
                 </div>
-                <p className="text-[11px] text-slate-400 mb-6">This version ensures costs from "No Region" (like Taxes) are correctly labeled as "Global" for the dashboard to pick up.</p>
                 <div className="bg-slate-800/50 p-6 rounded-2xl overflow-x-auto max-h-[300px]">
                   <pre className="text-emerald-400 font-mono text-[11px]">{lambdaCode}</pre>
-                </div>
-              </div>
-
-              <div className="bg-slate-50 p-10 rounded-[40px] border border-slate-200">
-                <h3 className="text-[12px] font-black uppercase tracking-widest mb-4">IAM Cost Explorer Policy</h3>
-                <div className="bg-white p-8 rounded-[32px] text-slate-700 font-mono text-[11px] border border-slate-200 shadow-sm">
-                  <pre>{`{
-  "Version": "2012-10-17",
-  "Statement": [
-    {
-      "Effect": "Allow",
-      "Action": ["ce:GetCostAndUsage"],
-      "Resource": "*"
-    }
-  ]
-}`}</pre>
                 </div>
               </div>
             </div>
@@ -285,15 +271,15 @@ def lambda_handler(event, context):
               <button onClick={() => setShowLambdaInfo(true)} className="text-blue-400 hover:text-blue-300 transition-colors"><Settings2 size={14} /></button>
             </div>
             <form onSubmit={connectAWS} className="space-y-4">
-              <div className="relative group">
+              <div className="relative">
                 <Key className="absolute left-4 top-4 text-slate-500" size={16} />
-                <input type="text" placeholder="Access Key ID" className="w-full pl-12 pr-4 py-4 bg-slate-800/50 border border-slate-700 rounded-2xl text-[11px] font-bold text-white focus:ring-2 focus:ring-blue-500 outline-none placeholder:text-slate-600" value={credentials.accessKeyId} onChange={e => setCredentials({...credentials, accessKeyId: e.target.value})} />
+                <input type="text" placeholder="Access Key ID" className="w-full pl-12 pr-4 py-4 bg-slate-800/50 border border-slate-700 rounded-2xl text-[11px] font-bold text-white outline-none placeholder:text-slate-600 focus:ring-2 focus:ring-blue-500" value={credentials.accessKeyId} onChange={e => setCredentials({...credentials, accessKeyId: e.target.value})} />
               </div>
-              <div className="relative group">
+              <div className="relative">
                 <Link2 className="absolute left-4 top-4 text-slate-500" size={16} />
-                <input type="text" placeholder="Lambda URL" className="w-full pl-12 pr-4 py-4 bg-slate-800/50 border border-slate-700 rounded-2xl text-[11px] font-bold text-white focus:ring-2 focus:ring-blue-500 outline-none placeholder:text-slate-600" value={credentials.endpoint} onChange={e => setCredentials({...credentials, endpoint: e.target.value})} />
+                <input type="text" placeholder="Lambda URL" className="w-full pl-12 pr-4 py-4 bg-slate-800/50 border border-slate-700 rounded-2xl text-[11px] font-bold text-white outline-none placeholder:text-slate-600 focus:ring-2 focus:ring-blue-500" value={credentials.endpoint} onChange={e => setCredentials({...credentials, endpoint: e.target.value})} />
               </div>
-              <button type="submit" disabled={isFetching} className="w-full py-5 bg-blue-600 text-white rounded-[24px] text-[11px] font-black uppercase tracking-widest hover:bg-blue-500 transition-all flex items-center justify-center gap-3 disabled:opacity-50 shadow-lg shadow-blue-900/40">
+              <button type="submit" disabled={isFetching} className="w-full py-5 bg-blue-600 text-white rounded-[24px] text-[11px] font-black uppercase tracking-widest hover:bg-blue-500 transition-all flex items-center justify-center gap-3 disabled:opacity-50">
                 {isFetching ? <RefreshCw className="animate-spin" size={16} /> : <><Pulse size={16}/> Sync Data</>}
               </button>
             </form>
@@ -338,7 +324,7 @@ def lambda_handler(event, context):
               <p className="text-3xl font-black text-slate-900 tracking-tight">Canada Central</p>
               <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest mt-3 flex items-center gap-2">
                  <span className="w-2 h-2 bg-purple-500 rounded-full animate-ping" />
-                 Peak Load • ${filteredSortedRegions[filteredSortedRegions.length - 1]?.cost.toLocaleString() || '0'}
+                 Peak Load • ${orderedRegions.find(r => r.region.toLowerCase().includes('canada'))?.cost.toLocaleString() || '0'}
               </p>
             </div>
 
@@ -347,7 +333,7 @@ def lambda_handler(event, context):
                 <div className="p-5 bg-emerald-50 text-emerald-600 rounded-[32px] shadow-sm"><ShieldCheck size={32} /></div>
               </div>
               <h3 className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-2">System Insight</h3>
-              <p className="text-3xl font-black text-slate-900 tracking-tight">Tracking {filteredSortedRegions.length} Core Regions</p>
+              <p className="text-3xl font-black text-slate-900 tracking-tight">Tracking {orderedRegions.length} Regions</p>
               <div className="w-full bg-slate-100 h-4 rounded-full mt-8 overflow-hidden shadow-inner p-1">
                 <div className="bg-emerald-500 h-full rounded-full transition-all duration-1500" style={{ width: '100%' }} />
               </div>
@@ -361,19 +347,14 @@ def lambda_handler(event, context):
                   <div>
                     <h2 className="text-[13px] font-black uppercase tracking-[0.2em] flex items-center gap-4">
                       <span className="w-4 h-4 bg-blue-500 rounded-full animate-pulse shadow-[0_0_20px_rgba(59,130,246,0.5)]" />
-                      Priority Regional Load
+                      Priority Region Load
                     </h2>
-                    <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-2">Cost Volume (Ascending)</p>
-                  </div>
-                  <div className="flex flex-wrap gap-2">
-                    {TARGET_REGIONS.map(r => (
-                      <span key={r.key} className="px-4 py-2 bg-slate-50 border border-slate-200 rounded-full text-[9px] font-black text-slate-400 uppercase tracking-widest">{r.label}</span>
-                    ))}
+                    <p className="text-[10px] text-slate-400 font-black uppercase tracking-widest mt-2">Hierarchy: Canada → Virginia → Ohio → Oregon → Taxes</p>
                   </div>
                 </div>
                 <div className="h-[500px]">
                   <ResponsiveContainer width="100%" height="100%">
-                    <BarChart data={filteredSortedRegions}>
+                    <BarChart data={orderedRegions}>
                       <defs>
                         <linearGradient id="barGradient" x1="0" y1="0" x2="0" y2="1">
                           <stop offset="0%" stopColor="#3b82f6" stopOpacity={1}/><stop offset="100%" stopColor="#6366f1" stopOpacity={0.8}/>
@@ -394,13 +375,11 @@ def lambda_handler(event, context):
           {activeTab === 'trends' && (
             <div className="animate-in fade-in slide-in-from-bottom-8 duration-700">
               <div className="bg-white rounded-[72px] border border-slate-200 overflow-hidden shadow-sm">
-                <div className="px-16 py-16 border-b border-slate-100 flex items-center justify-between bg-slate-50/50">
-                  <div>
-                    <h2 className="text-[14px] font-black uppercase tracking-[0.3em] flex items-center gap-4 mb-2">
-                      <Database size={24} className="text-blue-500" /> Historical Billing Ledger
-                    </h2>
-                    <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">Aggregate & Regional Cost Breakdown</p>
-                  </div>
+                <div className="px-16 py-16 border-b border-slate-100 bg-slate-50/50">
+                  <h2 className="text-[14px] font-black uppercase tracking-[0.3em] flex items-center gap-4 mb-2">
+                    <Database size={24} className="text-blue-500" /> Historical Billing Ledger
+                  </h2>
+                  <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">High-Visibility Regional Breakdown</p>
                 </div>
                 
                 <div className="overflow-x-auto">
@@ -409,16 +388,15 @@ def lambda_handler(event, context):
                       <tr className="text-[11px] font-black uppercase tracking-widest text-slate-400 bg-slate-50/80">
                         <th className="py-12 px-16">Fiscal Period</th>
                         <th className="py-12 px-16 text-right">Aggregate Spend</th>
-                        <th className="py-12 px-16 text-right">Cost Per Region (Taxes Included)</th>
+                        <th className="py-12 px-16 text-right">Cost Per Region Breakdown</th>
                       </tr>
                     </thead>
                     <tbody className="divide-y divide-slate-100">
                       {[...billingHistory].reverse().map((month, idx) => {
                         const total = month.entries.reduce((s, e) => s + e.cost, 0);
                         
-                        // Intelligent region matching for the ledger breakdown
+                        // Strict ordering for ledger breakdown columns
                         const breakdown = TARGET_REGIONS.map(target => {
-                          // Find any entries that match our target region keywords
                           const entry = month.entries.find(e => {
                             const regionLower = e.region.toLowerCase();
                             return target.match.some(keyword => regionLower.includes(keyword));
@@ -429,17 +407,17 @@ def lambda_handler(event, context):
                         return (
                           <tr key={idx} className="group hover:bg-slate-50/50 transition-all">
                             <td className="py-12 px-16 font-black text-slate-900 uppercase tracking-widest text-[12px]">
-                              {month.month === currentMonth.month ? <span className="text-blue-600 font-black flex items-center gap-2"><Pulse size={12} className="animate-pulse" /> {month.month}</span> : month.month}
+                              {month.month === currentMonth.month ? <span className="text-blue-600 flex items-center gap-2"><Pulse size={12} className="animate-pulse" /> {month.month}</span> : month.month}
                             </td>
-                            <td className="py-12 px-16 text-right font-mono font-black text-slate-900 text-lg">
+                            <td className="py-12 px-16 text-right font-mono font-black text-slate-900 text-xl">
                               ${total.toLocaleString()}
                             </td>
                             <td className="py-12 px-16 text-right">
-                              <div className="flex flex-wrap gap-2 justify-end">
+                              <div className="flex flex-wrap gap-3 justify-end">
                                 {breakdown.map((b, i) => (
-                                  <div key={i} className={`px-4 py-2 rounded-2xl border transition-all ${b.cost > 0 ? 'bg-slate-100 border-slate-200' : 'bg-slate-50/50 border-slate-100 opacity-50'}`}>
-                                    <span className="text-[9px] font-black text-slate-400 uppercase tracking-tighter block leading-none mb-1">{b.label}</span>
-                                    <span className="text-[11px] font-black text-slate-700 tracking-tight">${b.cost.toLocaleString()}</span>
+                                  <div key={i} className={`px-5 py-3 rounded-[24px] border-2 transition-all shadow-sm ${b.cost > 0 ? 'bg-white border-slate-300 scale-100' : 'bg-slate-50/50 border-slate-100 opacity-30'}`}>
+                                    <span className="text-[9px] font-black text-slate-500 uppercase tracking-tighter block leading-none mb-1.5">{b.label}</span>
+                                    <span className="text-[13px] font-black text-slate-900 tracking-tight block">${b.cost.toLocaleString()}</span>
                                   </div>
                                 ))}
                               </div>
