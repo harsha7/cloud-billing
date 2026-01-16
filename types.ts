@@ -1,9 +1,10 @@
 
 export interface BillingEntry {
   region: string;
-  project: string;
+  project?: string;
+  service?: string; // New field for AWS Service breakdown (e.g., EC2, RDS)
   cost: number;
-  [key: string]: string | number;
+  [key: string]: string | number | undefined;
 }
 
 export interface MonthlyData {
