@@ -9,7 +9,7 @@ import {
   AlertCircle, Share2, Database, CheckCircle2, Key, Server, 
   ChevronRight, X, Copy, Terminal, Settings2, Activity as Pulse, AlertTriangle, Link2,
   ArrowRightLeft, Minus, Plus, Calendar, ChevronDown, ArrowRight, Layers,
-  Search, Download, ChevronLeft, Filter, ExternalLink
+  Search, Download, ChevronLeft, Filter, ExternalLink, Info, ChevronUp
 } from 'lucide-react';
 import { MonthlyData, AWSCredentials, BillingEntry } from './types';
 
@@ -84,6 +84,7 @@ export default function App() {
   const [targetMonthIdx, setTargetMonthIdx] = useState(billingHistory.length - 1);
   const [drillDownRegion, setDrillDownRegion] = useState(TARGET_REGIONS[0].key);
   const [drillDownMonthIdx, setDrillDownMonthIdx] = useState(billingHistory.length - 1);
+  const [expandedComparisonRegion, setExpandedComparisonRegion] = useState<string | null>(null);
 
   useEffect(() => {
     if (billingHistory.length > 0) {
@@ -135,13 +136,13 @@ export default function App() {
   };
 
   const getAggregatedRegions = (month: MonthlyData) => {
-    if (!month || !month.entries) return TARGET_REGIONS.map(t => ({ region: t.label, key: t.key, cost: 0, color: t.color }));
+    if (!month || !month.entries) return TARGET_REGIONS.map(t => ({ region: t.label, key: t.key, cost: 0, color: t.color, entries: [] }));
     return TARGET_REGIONS.map(target => {
       const regionEntries = month.entries.filter(e => {
         const regName = (e.region || e.Region || (e.Keys && e.Keys[0]) || "").toLowerCase();
         return target.match.some(keyword => regName.includes(keyword));
       });
-      return { region: target.label, key: target.key, cost: regionEntries.reduce((sum, e) => sum + e.cost, 0), color: target.color };
+      return { region: target.label, key: target.key, cost: regionEntries.reduce((sum, e) => sum + e.cost, 0), color: target.color, entries: regionEntries };
     });
   };
 
@@ -160,10 +161,49 @@ export default function App() {
   const comparisonData = useMemo(() => {
     const baseAgg = getAggregatedRegions(activeBaseMonth);
     const targetAgg = getAggregatedRegions(activeTargetMonth);
+    
     return TARGET_REGIONS.map((target, idx) => {
       const cur = targetAgg[idx]?.cost || 0;
       const prev = baseAgg[idx]?.cost || 0;
-      return { label: target.label, current: cur, previous: prev, diff: cur - prev, percent: prev > 0 ? ((cur - prev) / prev) * 100 : 0 };
+      
+      // Calculate service-level variance for drilldown
+      const baseServices: Record<string, number> = {};
+      baseAgg[idx].entries.forEach(e => {
+        const svc = e.service || e.Service || "Other Infrastructure";
+        baseServices[svc] = (baseServices[svc] || 0) + e.cost;
+      });
+
+      const targetServices: Record<string, number> = {};
+      targetAgg[idx].entries.forEach(e => {
+        const svc = e.service || e.Service || "Other Infrastructure";
+        targetServices[svc] = (targetServices[svc] || 0) + e.cost;
+      });
+
+      const allServiceNames = Array.from(new Set([...Object.keys(baseServices), ...Object.keys(targetServices)]));
+      const serviceVariance = allServiceNames.map(name => {
+        const c1 = baseServices[name] || 0;
+        const c2 = targetServices[name] || 0;
+        return {
+          name,
+          baseCost: c1,
+          targetCost: c2,
+          diff: c2 - c1,
+          percent: c1 > 0 ? ((c2 - c1) / c1) * 100 : (c2 > 0 ? 100 : 0)
+        };
+      })
+      // CRITICAL: Filter out services that haven't changed ($0 variance)
+      .filter(s => Math.abs(s.diff) > 0.009)
+      .sort((a, b) => Math.abs(b.diff) - Math.abs(a.diff));
+
+      return { 
+        key: target.key,
+        label: target.label, 
+        current: cur, 
+        previous: prev, 
+        diff: cur - prev, 
+        percent: prev > 0 ? ((cur - prev) / prev) * 100 : 0,
+        serviceVariance
+      };
     });
   }, [activeTargetMonth, activeBaseMonth]);
 
@@ -398,22 +438,122 @@ def lambda_handler(event, context):
                 <div className="px-16 py-16 border-b border-slate-100 bg-slate-50/50 flex flex-col lg:flex-row lg:items-center justify-between gap-8">
                   <div><h2 className="text-[14px] font-black uppercase tracking-[0.3em] flex items-center gap-4 mb-2"><ArrowRightLeft size={24} className="text-blue-500" /> Parallel Variance Engine</h2></div>
                   <div className="flex items-center gap-6">
-                    <select value={baseMonthIdx} onChange={(e) => setBaseMonthIdx(parseInt(e.target.value))} className="bg-slate-100 px-8 py-4 rounded-2xl text-[11px] font-black uppercase text-slate-600 outline-none">{billingHistory.map((m, i) => <option key={i} value={i}>{m.month}</option>)}</select>
-                    <ArrowRight size={24} className="text-slate-300" />
-                    <select value={targetMonthIdx} onChange={(e) => setTargetMonthIdx(parseInt(e.target.value))} className="bg-blue-600 px-8 py-4 rounded-2xl text-[11px] font-black uppercase text-white outline-none">{billingHistory.map((m, i) => <option key={i} value={i}>{m.month}</option>)}</select>
+                    <div className="flex flex-col">
+                      <span className="text-[9px] font-black text-slate-400 uppercase mb-1">Baseline Month</span>
+                      <select value={baseMonthIdx} onChange={(e) => setBaseMonthIdx(parseInt(e.target.value))} className="bg-slate-100 px-8 py-4 rounded-2xl text-[11px] font-black uppercase text-slate-600 outline-none hover:bg-slate-200 transition-colors">{billingHistory.map((m, i) => <option key={i} value={i}>{m.month}</option>)}</select>
+                    </div>
+                    <ArrowRight size={24} className="text-slate-300 self-end mb-3" />
+                    <div className="flex flex-col">
+                      <span className="text-[9px] font-black text-blue-400 uppercase mb-1">Target Month</span>
+                      <select value={targetMonthIdx} onChange={(e) => setTargetMonthIdx(parseInt(e.target.value))} className="bg-blue-600 px-8 py-4 rounded-2xl text-[11px] font-black uppercase text-white outline-none hover:bg-blue-700 transition-colors shadow-lg shadow-blue-200">{billingHistory.map((m, i) => <option key={i} value={i}>{m.month}</option>)}</select>
+                    </div>
                   </div>
                 </div>
                 <div className="p-16 space-y-8">
                    {comparisonData.map((item, idx) => {
                       const isUp = item.diff > 0;
+                      const isExpanded = expandedComparisonRegion === item.key;
+                      
                       return (
-                        <div key={idx} className="grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] items-center gap-10 group transition-all">
-                           <div className="bg-slate-50/50 rounded-[48px] p-8 border border-slate-100 flex items-center justify-between w-full"><span className="text-[13px] font-black text-slate-900 uppercase tracking-tight">{item.label}</span><span className="text-[20px] font-black text-slate-400 tracking-tighter">${item.previous.toLocaleString()}</span></div>
-                           <div className="text-slate-200 hidden lg:block"><ArrowRight size={32} /></div>
-                           <div className="bg-white rounded-[48px] p-8 border-2 border-blue-50 shadow-xl flex items-center justify-between group-hover:scale-[1.01] transition-transform w-full">
-                              <div className="flex items-center gap-6"><div className={`p-4 rounded-2xl ${isUp ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>{isUp ? <Plus size={20} /> : <Minus size={20} />}</div><span className="text-[13px] font-black text-slate-900 uppercase tracking-tight">{item.label}</span></div>
-                              <div className="text-right"><span className={`text-[10px] font-black px-4 py-1 rounded-full mb-1 inline-block ${isUp ? 'bg-rose-600 text-white' : 'bg-emerald-600 text-white'}`}>{isUp ? '+' : ''}{item.percent.toFixed(1)}%</span><span className="text-[24px] font-black text-slate-900 tracking-tighter block">${item.current.toLocaleString()}</span></div>
-                           </div>
+                        <div key={idx} className="flex flex-col gap-4 group">
+                          <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr_auto] items-center gap-10 group transition-all">
+                             <div className="bg-slate-50/50 rounded-[48px] p-8 border border-slate-100 flex items-center justify-between w-full shadow-sm">
+                                <span className="text-[13px] font-black text-slate-900 uppercase tracking-tight">{item.label}</span>
+                                <span className="text-[20px] font-black text-slate-400 tracking-tighter">${item.previous.toLocaleString()}</span>
+                             </div>
+                             
+                             <div className="text-slate-200 hidden lg:block"><ArrowRight size={32} /></div>
+                             
+                             <div className="bg-white rounded-[48px] p-8 border-2 border-blue-50 shadow-xl flex items-center justify-between group-hover:scale-[1.01] transition-transform w-full relative overflow-hidden">
+                                <div className="flex items-center gap-6">
+                                  <div className={`p-4 rounded-2xl ${isUp ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                                    {isUp ? <Plus size={20} /> : <Minus size={20} />}
+                                  </div>
+                                  <span className="text-[13px] font-black text-slate-900 uppercase tracking-tight">{item.label}</span>
+                                </div>
+                                <div className="text-right">
+                                  <span className={`text-[10px] font-black px-4 py-1 rounded-full mb-1 inline-block ${isUp ? 'bg-rose-600 text-white shadow-lg shadow-rose-200' : 'bg-emerald-600 text-white shadow-lg shadow-emerald-200'}`}>
+                                    {isUp ? '+' : ''}{item.percent.toFixed(1)}%
+                                  </span>
+                                  <span className="text-[24px] font-black text-slate-900 tracking-tighter block">${item.current.toLocaleString()}</span>
+                                </div>
+                             </div>
+
+                             <button 
+                                onClick={() => setExpandedComparisonRegion(isExpanded ? null : item.key)}
+                                className={`p-6 rounded-full transition-all flex items-center justify-center ${isExpanded ? 'bg-slate-900 text-white' : 'bg-slate-100 text-slate-400 hover:bg-slate-200 hover:text-slate-900'}`}
+                             >
+                               {isExpanded ? <ChevronUp size={24} /> : <Info size={24} />}
+                             </button>
+                          </div>
+
+                          {/* Expanded Service Breakdown */}
+                          {isExpanded && (
+                            <div className="bg-slate-50 border-2 border-slate-100 rounded-[48px] p-10 mt-2 animate-in slide-in-from-top-4 duration-300">
+                               <div className="flex items-center justify-between mb-10">
+                                  <div>
+                                     <h4 className="text-[11px] font-black uppercase tracking-widest text-slate-400 mb-1">Active Variance: {item.label}</h4>
+                                     <p className="text-slate-900 font-bold text-sm">Showing only services with <span className={isUp ? 'text-rose-600' : 'text-emerald-600'}>useful variance data</span></p>
+                                  </div>
+                                  <div className="flex items-center gap-3">
+                                     <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-xl border border-slate-200"><div className="w-2 h-2 bg-rose-500 rounded-full" /><span className="text-[10px] font-black uppercase text-slate-600">Cost Drivers</span></div>
+                                     <div className="flex items-center gap-2 px-4 py-2 bg-white rounded-xl border border-slate-200"><div className="w-2 h-2 bg-emerald-500 rounded-full" /><span className="text-[10px] font-black uppercase text-slate-600">Savings</span></div>
+                                  </div>
+                               </div>
+                               
+                               <div className="overflow-hidden rounded-[32px] border border-slate-200 bg-white shadow-sm">
+                                  <table className="w-full text-left">
+                                     <thead>
+                                        <tr className="bg-slate-50/80 border-b border-slate-100 text-[10px] font-black uppercase tracking-widest text-slate-400">
+                                           <th className="py-6 px-10">Service with Variance</th>
+                                           <th className="py-6 px-10 text-right">{billingHistory[baseMonthIdx].month}</th>
+                                           <th className="py-6 px-10 text-right">{billingHistory[targetMonthIdx].month}</th>
+                                           <th className="py-6 px-10 text-right">Variance Impact</th>
+                                        </tr>
+                                     </thead>
+                                     <tbody className="divide-y divide-slate-50">
+                                        {item.serviceVariance.length > 0 ? item.serviceVariance.map((svc, sidx) => {
+                                           const sUp = svc.diff > 0;
+                                           return (
+                                              <tr key={sidx} className="hover:bg-slate-50 transition-colors">
+                                                 <td className="py-5 px-10">
+                                                    <div className="flex items-center gap-3">
+                                                       <div className={`w-1.5 h-6 rounded-full ${sUp ? 'bg-rose-500 shadow-[0_0_8px_rgba(225,29,72,0.3)]' : 'bg-emerald-500 shadow-[0_0_8px_rgba(16,185,129,0.3)]'}`} />
+                                                       <span className="text-sm font-black text-slate-900 uppercase tracking-tight">{svc.name}</span>
+                                                    </div>
+                                                 </td>
+                                                 <td className="py-5 px-10 text-right font-medium text-slate-400 text-sm">${svc.baseCost.toLocaleString()}</td>
+                                                 <td className="py-5 px-10 text-right font-black text-slate-900 text-sm">${svc.targetCost.toLocaleString()}</td>
+                                                 <td className="py-5 px-10 text-right">
+                                                    <div className="flex flex-col items-end">
+                                                       <span className={`text-sm font-black ${sUp ? 'text-rose-600' : 'text-emerald-600'}`}>
+                                                          {sUp ? '+' : ''}${svc.diff.toLocaleString()}
+                                                       </span>
+                                                       <span className="text-[10px] font-bold text-slate-400">
+                                                          {sUp ? '+' : ''}{svc.percent.toFixed(1)}% change
+                                                       </span>
+                                                    </div>
+                                                 </td>
+                                              </tr>
+                                           );
+                                        }) : (
+                                          <tr>
+                                            <td colSpan={4} className="py-16 text-center text-slate-400 font-bold italic">No variances found. Costs are identical between periods.</td>
+                                          </tr>
+                                        )}
+                                     </tbody>
+                                  </table>
+                               </div>
+                               {item.serviceVariance.length > 0 && (
+                                 <div className="mt-8 p-6 bg-blue-50 rounded-[24px] border border-blue-100 flex items-center gap-4">
+                                    <Info className="text-blue-600 shrink-0" size={20} />
+                                    <p className="text-xs font-bold text-blue-700 leading-relaxed">
+                                       <b>Optimization Insight:</b> Primary driver in {item.label} is {item.serviceVariance[0]?.name}. Hiding services with 0% change to focus on active cost volatility.
+                                    </p>
+                                 </div>
+                               )}
+                            </div>
+                          )}
                         </div>
                       );
                    })}
