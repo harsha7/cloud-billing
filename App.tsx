@@ -7,7 +7,8 @@ import {
   Activity, TrendingUp, DollarSign, Globe, LayoutDashboard, History,
   ArrowUpRight, ArrowDownRight, ShieldCheck, RefreshCw,
   AlertCircle, Share2, Database, CheckCircle2, Key, Server, 
-  ChevronRight, X, Copy, Terminal, Settings2, Activity as Pulse, AlertTriangle, Link2
+  ChevronRight, X, Copy, Terminal, Settings2, Activity as Pulse, AlertTriangle, Link2,
+  ArrowRightLeft, Minus, Plus, Calendar, ChevronDown, ArrowRight
 } from 'lucide-react';
 import { MonthlyData, AWSCredentials } from './types';
 
@@ -87,7 +88,7 @@ const CustomRegionTick = (props: any) => {
 
 export default function App() {
   const [billingHistory, setBillingHistory] = useState<MonthlyData[]>(generateMock12Months());
-  const [activeTab, setActiveTab] = useState<'overview' | 'trends'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'trends' | 'comparison'>('overview');
   const [isFetching, setIsFetching] = useState(false);
   const [showLambdaInfo, setShowLambdaInfo] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
@@ -98,12 +99,20 @@ export default function App() {
     endpoint: ''
   });
 
+  // Comparison State
+  const [baseMonthIdx, setBaseMonthIdx] = useState(billingHistory.length - 2);
+  const [targetMonthIdx, setTargetMonthIdx] = useState(billingHistory.length - 1);
+
   useEffect(() => {
     const params = new URLSearchParams(window.location.search);
     const sharedData = params.get('report');
     if (sharedData) {
       const decoded = decodeState(sharedData);
-      if (decoded) setBillingHistory(decoded);
+      if (decoded) {
+        setBillingHistory(decoded);
+        setBaseMonthIdx(decoded.length - 2);
+        setTargetMonthIdx(decoded.length - 1);
+      }
     }
   }, []);
 
@@ -140,6 +149,8 @@ export default function App() {
       if (!response.ok) throw new Error(`AWS Status ${response.status}`);
       const data = await response.json();
       setBillingHistory(data);
+      setBaseMonthIdx(data.length - 2);
+      setTargetMonthIdx(data.length - 1);
       showToast("Real-time Data Synced!");
     } catch (err: any) {
       showToast(`Sync Failed: ${err.message}`, "error");
@@ -158,25 +169,56 @@ export default function App() {
 
   const currentMonth = billingHistory[billingHistory.length - 1];
   
-  // FILTER AND SORT REGIONS IN STRICT REQUESTED ORDER WITH DESCRIPTIVE LABELS
+  // Dynamic Month Objects based on Selection
+  const activeBaseMonth = billingHistory[baseMonthIdx] || billingHistory[0];
+  const activeTargetMonth = billingHistory[targetMonthIdx] || currentMonth;
+
+  const totalBaseSpend = useMemo(() => activeBaseMonth.entries.reduce((s, e) => s + e.cost, 0), [activeBaseMonth]);
+  const totalTargetSpend = useMemo(() => activeTargetMonth.entries.reduce((s, e) => s + e.cost, 0), [activeTargetMonth]);
+  const dynamicMomPercent = totalBaseSpend > 0 ? ((totalTargetSpend - totalBaseSpend) / totalBaseSpend) * 100 : 0;
+  
+  // Logic for the summary cards (always shows latest)
+  const totalSpendLatest = useMemo(() => currentMonth.entries.reduce((sum, e) => sum + e.cost, 0), [currentMonth]);
+  const previousMonthLatest = billingHistory[billingHistory.length - 2];
+  const prevTotalSpendLatest = useMemo(() => previousMonthLatest?.entries.reduce((sum, e) => sum + e.cost, 0) || 0, [previousMonthLatest]);
+  const momPercentLatest = prevTotalSpendLatest > 0 ? ((totalSpendLatest - prevTotalSpendLatest) / prevTotalSpendLatest) * 100 : 0;
+
   const orderedRegions = useMemo(() => {
     return TARGET_REGIONS.map(target => {
       const entry = currentMonth.entries.find(e => {
         const name = e.region.toLowerCase();
         return target.match.some(keyword => name.includes(keyword));
       });
-      // Return a combined object for the chart
-      return {
-        region: target.label,
-        cost: entry?.cost || 0
-      };
+      return { region: target.label, cost: entry?.cost || 0 };
     });
   }, [currentMonth]);
 
-  const totalSpend = useMemo(() => currentMonth.entries.reduce((sum, e) => sum + e.cost, 0), [currentMonth]);
-  const previousMonth = billingHistory[billingHistory.length - 2];
-  const prevTotalSpend = useMemo(() => previousMonth?.entries.reduce((sum, e) => sum + e.cost, 0) || 0, [previousMonth]);
-  const momPercent = prevTotalSpend > 0 ? ((totalSpend - prevTotalSpend) / prevTotalSpend) * 100 : 0;
+  // MO-M COMPARISON DATA (DYNAMIC)
+  const comparisonData = useMemo(() => {
+    return TARGET_REGIONS.map(target => {
+      const current = activeTargetMonth.entries.find(e => {
+        const name = e.region.toLowerCase();
+        return target.match.some(keyword => name.includes(keyword));
+      });
+      const previous = activeBaseMonth.entries.find(e => {
+        const name = e.region.toLowerCase();
+        return target.match.some(keyword => name.includes(keyword));
+      });
+
+      const curVal = current?.cost || 0;
+      const prevVal = previous?.cost || 0;
+      const diff = curVal - prevVal;
+      const percent = prevVal > 0 ? (diff / prevVal) * 100 : 0;
+
+      return {
+        label: target.label,
+        current: curVal,
+        previous: prevVal,
+        diff,
+        percent
+      };
+    });
+  }, [activeTargetMonth, activeBaseMonth]);
 
   const lambdaCode = `import json
 import boto3
@@ -240,7 +282,6 @@ def lambda_handler(event, context):
               </div>
               <button onClick={() => setShowLambdaInfo(false)} className="p-3 hover:bg-slate-100 rounded-2xl transition-all"><X size={24}/></button>
             </div>
-            
             <div className="space-y-8">
               <div className="bg-slate-900 p-10 rounded-[40px] text-white shadow-2xl">
                 <div className="flex items-center justify-between mb-6">
@@ -280,7 +321,6 @@ def lambda_handler(event, context):
               <span className="text-[10px] font-black uppercase tracking-widest text-slate-400 underline decoration-blue-500 decoration-2 underline-offset-4">Enterprise Hub</span>
             </div>
           </div>
-
           <nav className="space-y-1">
             <button onClick={() => setActiveTab('overview')} className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl text-sm font-bold transition-all ${activeTab === 'overview' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}>
               <LayoutDashboard size={20} /> Dashboard
@@ -288,9 +328,11 @@ def lambda_handler(event, context):
             <button onClick={() => setActiveTab('trends')} className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl text-sm font-bold transition-all ${activeTab === 'trends' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}>
               <TrendingUp size={20} /> 12M History
             </button>
+            <button onClick={() => setActiveTab('comparison')} className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl text-sm font-bold transition-all ${activeTab === 'comparison' ? 'bg-blue-50 text-blue-700 shadow-sm' : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}>
+              <ArrowRightLeft size={20} /> MoM Comparison
+            </button>
           </nav>
         </div>
-
         <div className="mt-auto p-6">
           <div className="bg-slate-900 rounded-[40px] p-8 shadow-2xl border border-slate-800">
             <div className="flex items-center justify-between mb-6">
@@ -326,22 +368,21 @@ def lambda_handler(event, context):
           </button>
         </header>
 
-        <div className={`p-12 mx-auto space-y-12 ${activeTab === 'trends' ? 'max-w-[100%]' : 'max-w-7xl'}`}>
+        <div className={`p-12 mx-auto space-y-12 ${(activeTab === 'trends' || activeTab === 'comparison') ? 'max-w-[100%]' : 'max-w-7xl'}`}>
           {/* Summary Cards */}
           <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
             <div className="bg-white p-12 rounded-[64px] border border-slate-200 shadow-sm relative group overflow-hidden">
               <div className="absolute -top-6 -right-6 p-12 opacity-[0.03] text-blue-600"><DollarSign size={160} /></div>
               <div className="flex justify-between items-start mb-8">
                 <div className="p-5 bg-blue-50 text-blue-600 rounded-[32px] shadow-sm"><DollarSign size={32} /></div>
-                <div className={`flex items-center gap-2 text-[11px] font-black px-5 py-2.5 rounded-2xl ${momPercent >= 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
-                  {momPercent >= 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
-                  {Math.abs(momPercent).toFixed(1)}% MoM
+                <div className={`flex items-center gap-2 text-[11px] font-black px-5 py-2.5 rounded-2xl ${momPercentLatest >= 0 ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                  {momPercentLatest >= 0 ? <ArrowUpRight size={16} /> : <ArrowDownRight size={16} />}
+                  {Math.abs(momPercentLatest).toFixed(1)}% MoM
                 </div>
               </div>
               <h3 className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-2">{currentMonth.month} Total</h3>
-              <p className="text-6xl font-black text-slate-900 tracking-tighter">${totalSpend.toLocaleString()}</p>
+              <p className="text-6xl font-black text-slate-900 tracking-tighter">${totalSpendLatest.toLocaleString()}</p>
             </div>
-
             <div className="bg-white p-12 rounded-[64px] border border-slate-200 shadow-sm relative overflow-hidden group">
               <div className="absolute -top-6 -right-6 p-12 opacity-[0.03] text-purple-600"><Globe size={160} /></div>
               <div className="flex justify-between items-start mb-8">
@@ -354,7 +395,6 @@ def lambda_handler(event, context):
                  Peak Load • ${orderedRegions[0]?.cost.toLocaleString() || '0'}
               </p>
             </div>
-
             <div className="bg-white p-12 rounded-[64px] border border-slate-200 shadow-sm">
               <div className="flex justify-between items-start mb-8">
                 <div className="p-5 bg-emerald-50 text-emerald-600 rounded-[32px] shadow-sm"><ShieldCheck size={32} /></div>
@@ -388,13 +428,7 @@ def lambda_handler(event, context):
                         </linearGradient>
                       </defs>
                       <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                      <XAxis 
-                        dataKey="region" 
-                        interval={0}
-                        axisLine={false} 
-                        tickLine={false} 
-                        tick={<CustomRegionTick />}
-                      />
+                      <XAxis dataKey="region" interval={0} axisLine={false} tickLine={false} tick={<CustomRegionTick />} />
                       <YAxis tickFormatter={(val) => `$${val.toLocaleString()}`} stroke="#cbd5e1" fontSize={11} axisLine={false} tickLine={false} fontWeight="black" />
                       <Tooltip cursor={{ fill: '#f8fafc', radius: 32 }} contentStyle={{ borderRadius: '48px', border: 'none', boxShadow: '0 40px 100px -20px rgb(0 0 0 / 0.3)', padding: '32px' }} />
                       <Bar dataKey="cost" fill="url(#barGradient)" radius={[24, 24, 0, 0]} barSize={80} />
@@ -416,7 +450,6 @@ def lambda_handler(event, context):
                     <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">Enterprise-wide regional tracking • Last 12 Months</p>
                   </div>
                 </div>
-                
                 <div className="overflow-x-auto w-full">
                   <table className="w-full text-left table-fixed">
                     <thead>
@@ -429,8 +462,6 @@ def lambda_handler(event, context):
                     <tbody className="divide-y divide-slate-100">
                       {[...billingHistory].reverse().map((month, idx) => {
                         const total = month.entries.reduce((s, e) => s + e.cost, 0);
-                        
-                        // Strict ordering for ledger breakdown columns
                         const breakdown = TARGET_REGIONS.map(target => {
                           const entry = month.entries.find(e => {
                             const regionLower = e.region.toLowerCase();
@@ -438,7 +469,6 @@ def lambda_handler(event, context):
                           });
                           return { label: target.label, cost: entry?.cost || 0 };
                         });
-
                         return (
                           <tr key={idx} className="group hover:bg-blue-50/10 transition-all border-b border-slate-50">
                             <td className="py-12 px-16 font-black text-slate-900 uppercase tracking-widest text-[13px]">
@@ -450,17 +480,13 @@ def lambda_handler(event, context):
                             <td className="py-12 px-8">
                               <div className="grid grid-cols-1 sm:grid-cols-3 lg:grid-cols-5 gap-6 w-full">
                                 {breakdown.map((b, i) => {
-                                  // Parse main region and project for ledger
                                   const splitMatch = b.label.match(/^(.*?)\s*\((.*?)\)$/);
                                   const mainName = splitMatch ? splitMatch[1] : b.label;
                                   const subName = splitMatch ? splitMatch[2] : '';
-
                                   return (
                                     <div key={i} className={`flex flex-col items-center justify-center px-6 py-6 rounded-[40px] border-2 transition-all shadow-md group/card ${b.cost > 0 ? 'bg-white border-blue-50 scale-100 hover:border-blue-300' : 'bg-slate-50/50 border-slate-100 opacity-20'}`}>
                                       <span className="text-[14px] font-black text-slate-900 uppercase tracking-tight block text-center leading-tight mb-1">{mainName}</span>
-                                      {subName && (
-                                        <span className="text-[12px] font-bold text-blue-500 block mb-3 text-center transition-colors">({subName})</span>
-                                      )}
+                                      {subName && <span className="text-[12px] font-bold text-blue-500 block mb-3 text-center transition-colors">({subName})</span>}
                                       <span className="text-[18px] font-black text-slate-900 tracking-tighter block text-center">${b.cost.toLocaleString()}</span>
                                     </div>
                                   );
@@ -473,6 +499,142 @@ def lambda_handler(event, context):
                     </tbody>
                   </table>
                 </div>
+              </div>
+            </div>
+          )}
+
+          {activeTab === 'comparison' && (
+            <div className="animate-in fade-in slide-in-from-bottom-8 duration-700 w-full space-y-12">
+              <div className="bg-white rounded-[72px] border border-slate-200 overflow-hidden shadow-sm w-full">
+                <div className="px-16 py-16 border-b border-slate-100 bg-slate-50/50 flex flex-col lg:flex-row lg:items-center justify-between gap-8">
+                  <div>
+                    <h2 className="text-[14px] font-black uppercase tracking-[0.3em] flex items-center gap-4 mb-2">
+                      <ArrowRightLeft size={24} className="text-blue-500" /> Parallel Variance Engine
+                    </h2>
+                    <p className="text-[11px] text-slate-400 font-bold uppercase tracking-widest">
+                      Cost Bridge: Compare across regions in aligned parallel rows
+                    </p>
+                  </div>
+                  
+                  <div className="flex flex-wrap items-center gap-6">
+                    {/* Month Picker: Baseline */}
+                    <div className="flex flex-col">
+                       <label className="text-[9px] font-black text-slate-400 uppercase tracking-widest mb-2 px-4">Reference Month</label>
+                       <div className="relative">
+                          <select 
+                            value={baseMonthIdx} 
+                            onChange={(e) => setBaseMonthIdx(parseInt(e.target.value))}
+                            className="appearance-none bg-slate-100 px-10 py-4 rounded-2xl text-[11px] font-black uppercase tracking-widest text-slate-600 outline-none hover:bg-slate-200 transition-all cursor-pointer min-w-[180px]"
+                          >
+                             {billingHistory.map((m, i) => <option key={i} value={i}>{m.month}</option>)}
+                          </select>
+                          <Calendar size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                          <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                       </div>
+                    </div>
+
+                    <ArrowRight size={24} className="text-slate-300 hidden sm:block mt-6" />
+
+                    {/* Month Picker: Target */}
+                    <div className="flex flex-col">
+                       <label className="text-[9px] font-black text-blue-400 uppercase tracking-widest mb-2 px-4">Target Month</label>
+                       <div className="relative">
+                          <select 
+                            value={targetMonthIdx} 
+                            onChange={(e) => setTargetMonthIdx(parseInt(e.target.value))}
+                            className="appearance-none bg-blue-600 px-10 py-4 rounded-2xl text-[11px] font-black uppercase tracking-widest text-white outline-none hover:bg-blue-700 transition-all cursor-pointer min-w-[180px]"
+                          >
+                             {billingHistory.map((m, i) => <option key={i} value={i}>{m.month}</option>)}
+                          </select>
+                          <Calendar size={14} className="absolute left-4 top-1/2 -translate-y-1/2 text-blue-200" />
+                          <ChevronDown size={14} className="absolute right-4 top-1/2 -translate-y-1/2 text-blue-200" />
+                       </div>
+                    </div>
+                  </div>
+                </div>
+                
+                <div className="p-16 space-y-8">
+                   {/* Column Headers for Parallel Layout */}
+                   <div className="grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] items-center px-12 pb-6 border-b border-slate-50 gap-4">
+                      <div className="text-[11px] font-black text-slate-400 uppercase tracking-[0.2em]">Baseline Costs ({activeBaseMonth.month})</div>
+                      <div className="w-12" />
+                      <div className="text-[11px] font-black text-blue-500 uppercase tracking-[0.2em]">Analysis Costs ({activeTargetMonth.month})</div>
+                   </div>
+
+                   {comparisonData.map((item, idx) => {
+                      const isUp = item.diff > 0;
+                      const splitMatch = item.label.match(/^(.*?)\s*\((.*?)\)$/);
+                      const mainName = splitMatch ? splitMatch[1] : item.label;
+                      const subName = splitMatch ? splitMatch[2] : '';
+
+                      return (
+                        <div key={idx} className="grid grid-cols-1 lg:grid-cols-[1fr_auto_1fr] items-center gap-10 group transition-all">
+                           {/* Baseline Card */}
+                           <div className="bg-slate-50/50 rounded-[48px] p-8 border border-slate-100 flex items-center justify-between transition-all group-hover:bg-white group-hover:border-slate-200">
+                              <div>
+                                 <h4 className="text-[14px] font-black text-slate-900 uppercase tracking-tight mb-0.5">{mainName}</h4>
+                                 <span className="text-[12px] font-bold text-slate-400 underline decoration-slate-200 decoration-2 underline-offset-4">({subName})</span>
+                              </div>
+                              <span className="text-[24px] font-black text-slate-400 tracking-tighter">${item.previous.toLocaleString()}</span>
+                           </div>
+
+                           {/* Visual Connector */}
+                           <div className="hidden lg:flex items-center justify-center text-slate-200 group-hover:text-blue-200 transition-colors">
+                              <ArrowRight size={32} strokeWidth={1.5} />
+                           </div>
+
+                           {/* Analysis Card */}
+                           <div className="bg-white rounded-[48px] p-8 border-2 border-blue-50 shadow-xl shadow-blue-900/5 flex items-center justify-between transition-all group-hover:border-blue-200 group-hover:scale-[1.02]">
+                              <div className="flex items-center gap-6">
+                                 <div className={`p-4 rounded-2xl ${isUp ? 'bg-rose-50 text-rose-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                                    {isUp ? <Plus size={20} /> : <Minus size={20} />}
+                                 </div>
+                                 <div>
+                                    <h4 className="text-[14px] font-black text-slate-900 uppercase tracking-tight mb-0.5">{mainName}</h4>
+                                    <span className="text-[12px] font-bold text-blue-500 underline decoration-blue-100 decoration-2 underline-offset-4">({subName})</span>
+                                 </div>
+                              </div>
+                              <div className="text-right">
+                                 <div className={`text-[11px] font-black px-4 py-1.5 rounded-full inline-block mb-1.5 ${isUp ? 'bg-rose-600 text-white shadow-lg shadow-rose-200' : 'bg-emerald-600 text-white shadow-lg shadow-emerald-200'}`}>
+                                    {isUp ? '+' : ''}{item.percent.toFixed(1)}%
+                                 </div>
+                                 <span className="text-[26px] font-black text-slate-900 tracking-tighter block">${item.current.toLocaleString()}</span>
+                              </div>
+                           </div>
+                        </div>
+                      );
+                   })}
+                </div>
+              </div>
+
+              {/* Dynamic Summary Footer */}
+              <div className="grid grid-cols-1 md:grid-cols-2 gap-10">
+                 <div className="bg-slate-900 text-white p-16 rounded-[64px] shadow-2xl relative overflow-hidden">
+                    <div className="relative z-10">
+                       <h3 className="text-blue-400 text-[11px] font-black uppercase tracking-widest mb-4">Total Bridge Variance</h3>
+                       <p className="text-5xl font-black tracking-tighter mb-4">
+                          {totalTargetSpend > totalBaseSpend ? '+' : '-'}${Math.abs(totalTargetSpend - totalBaseSpend).toLocaleString()}
+                       </p>
+                       <p className="text-[12px] text-slate-400 font-bold max-w-md">
+                          Between {activeBaseMonth.month} and {activeTargetMonth.month}, total cloud expenditure has shifted by {dynamicMomPercent.toFixed(1)}% across the parallel regional stack.
+                       </p>
+                    </div>
+                    <div className="absolute -bottom-10 -right-10 opacity-10 text-white scale-150">
+                       <Activity size={200} />
+                    </div>
+                 </div>
+                 <div className="bg-white border border-slate-200 p-16 rounded-[64px] shadow-sm flex flex-col justify-center">
+                    <div className="flex items-center gap-4 mb-6">
+                       <div className="bg-blue-50 text-blue-600 p-4 rounded-3xl"><Activity size={32} /></div>
+                       <h3 className="text-slate-900 text-[20px] font-black tracking-tight leading-tight">Parallel Alignment Context</h3>
+                    </div>
+                    <p className="text-slate-500 text-[14px] leading-relaxed mb-8">
+                       The parallel layout ensures that <span className="text-slate-900 font-black">Ohio</span>, <span className="text-slate-900 font-black">Virginia</span>, and <span className="text-slate-900 font-black">Oregon</span> costs are perfectly balanced, making it easier to scan for outliers in real-time.
+                    </p>
+                    <button onClick={() => { setBaseMonthIdx(billingHistory.length - 2); setTargetMonthIdx(billingHistory.length - 1); }} className="px-10 py-5 bg-slate-100 text-slate-900 rounded-3xl text-[11px] font-black uppercase tracking-widest self-start hover:bg-slate-200 transition-all">
+                       Sync Latest Cycle
+                    </button>
+                 </div>
               </div>
             </div>
           )}
