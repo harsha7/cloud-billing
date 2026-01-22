@@ -1,8 +1,9 @@
 
 export interface BillingEntry {
-  region: string;
+  region?: string;
+  tenancy?: string; // New for OCI
   project?: string;
-  service?: string; // New field for AWS Service breakdown (e.g., EC2, RDS)
+  service?: string; 
   cost: number;
   [key: string]: string | number | undefined;
 }
@@ -12,12 +13,16 @@ export interface MonthlyData {
   entries: BillingEntry[];
 }
 
-export interface AWSCredentials {
-  accessKeyId: string;
-  secretAccessKey: string;
-  region: string;
+export interface CloudCredentials {
+  accessKeyId?: string;
+  secretAccessKey?: string;
+  region?: string;
   endpoint?: string;
+  ociUserOcid?: string;
+  ociTenancyOcid?: string;
 }
+
+export type CloudProvider = 'aws' | 'oci';
 
 export interface DashboardState {
   history: MonthlyData[];
