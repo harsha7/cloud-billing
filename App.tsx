@@ -279,8 +279,9 @@ export default function App() {
       const t = targetAgg[i];
       const serviceVariance = Array.from(new Set([...b.entries.map(e => e.service), ...t.entries.map(e => e.service)]))
         .map(name => {
-          const c1 = b.entries.find(e => e.service === name)?.cost || 0;
-          const c2 = t.entries.find(e => e.service === name)?.cost || 0;
+          // Sum every line for the service (OCI returns one line per SKU)
+          const c1 = b.entries.filter(e => e.service === name).reduce((s, e) => s + e.cost, 0);
+          const c2 = t.entries.filter(e => e.service === name).reduce((s, e) => s + e.cost, 0);
           return { name: name || 'Core Infra', baseCost: c1, targetCost: c2, diff: c2 - c1, percent: c1 > 0 ? ((c2 - c1) / c1) * 100 : 100 };
         })
         .filter(s => Math.abs(s.diff) > 0.01)
@@ -288,7 +289,7 @@ export default function App() {
 
       return { key: b.key, label: b.label, current: t.cost, previous: b.cost, diff: t.cost - b.cost, percent: b.cost > 0 ? ((t.cost - b.cost) / b.cost) * 100 : 0, serviceVariance };
     });
-  }, [baseMonthIdx, targetMonthIdx, billingHistory, provider]);
+  }, [baseMonthIdx, targetMonthIdx, billingHistory, provider, currentTargets, isRealData]);
 
   const serviceDrillDownData = useMemo(() => {
     const month = billingHistory[drillDownMonthIdx];
@@ -297,6 +298,12 @@ export default function App() {
     
     const serviceMap: Record<string, number> = {};
     month.entries.filter(e => {
+       // OCI real data: exact tenancy + region match (same rule as the dashboard chart)
+       if (provider === 'oci' && isRealData && String(target.key).includes('|')) {
+         const [t, r] = String(target.key).split('|');
+         return String(e.tenancy || e.Tenancy || "Unknown") === t &&
+                String(e.region || e.Region || "Global") === r;
+       }
        const val = String(e.region || e.tenancy || e.Region || e.Tenancy || "").toLowerCase();
        return target.match.some(kw => val.includes(kw));
     }).forEach(e => {
@@ -305,7 +312,7 @@ export default function App() {
     });
 
     return Object.entries(serviceMap).map(([name, cost]) => ({ name, cost })).sort((a,b) => b.cost - a.cost);
-  }, [drillDownMonthIdx, drillDownTarget, billingHistory, provider]);
+  }, [drillDownMonthIdx, drillDownTarget, billingHistory, provider, currentTargets, isRealData]);
 
   const ociFunctionScript = `import io
 import json
