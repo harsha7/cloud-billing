@@ -1,5 +1,5 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
-import { RefreshCw, Search, AlertTriangle, Info, Layers } from 'lucide-react';
+import { RefreshCw, Search, AlertTriangle, Info, Layers, Server, Trash2 } from 'lucide-react';
 
 // OCI inventory: actual billed cost per resource across every tenancy, from the parent
 // tenancy's Usage API via the existing cloudspend-func ({ mode: 'inventory' }).
@@ -8,11 +8,19 @@ type OciResource = {
   resource_type: string; service: string; services: Record<string, number>; skus: string[];
   compartment: string; owner: string; cost: number;
 };
+type OciFinding = {
+  check: string; confidence: 'likely' | 'review'; reason: string; tenancy: string; region: string;
+  compartment: string; resource_id: string; name: string; resource_type: string; owner: string;
+  cost: number; months_billed: number;
+};
 type OciInventory = {
   mode: string; period: 'last_month' | 'mtd'; period_start: string; period_end: string; generated_at: string;
   resources: OciResource[];
   summary: { count: number; total_cost: number; by_tenancy: Record<string, { count: number; cost: number }>;
              by_service: Record<string, { count: number; cost: number }>; owners_found: number };
+  findings?: OciFinding[];
+  findings_summary?: { count: number; est_monthly_usd: number; likely_usd: number;
+                       by_check: Record<string, { count: number; cost: number }>; history_months: number };
   warnings: string[]; error?: string;
 };
 
@@ -31,6 +39,8 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
   const [service, setService] = useState('All');
   const [query, setQuery] = useState('');
   const [copied, setCopied] = useState('');
+  const [view, setView] = useState<'inventory' | 'cleanup'>('inventory');
+  const [check, setCheck] = useState('All');
   const reqId = useRef(0);
 
   const load = async (p: 'last_month' | 'mtd', force = false) => {
@@ -59,7 +69,7 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
     }
   };
 
-  useEffect(() => { setTenancy('All'); setService('All'); load(period); }, [period]);
+  useEffect(() => { setTenancy('All'); setService('All'); setCheck('All'); load(period); }, [period]);
 
   const tenancies = useMemo(() => Object.entries(data?.summary.by_tenancy || {}), [data]);
   const services = useMemo(() => {
@@ -77,6 +87,21 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
       .some(v => (v || '').toLowerCase().includes(q))),
     [data, tenancy, service, q]);
   const shownTotal = rows.reduce((s, r) => s + r.cost, 0);
+
+  const checks = useMemo(() => {
+    const out: Record<string, number> = {};
+    (data?.findings || []).filter(f => tenancy === 'All' || f.tenancy === tenancy)
+      .forEach(f => { out[f.check] = (out[f.check] || 0) + f.cost; });
+    return Object.entries(out).sort((a, b) => b[1] - a[1]);
+  }, [data, tenancy]);
+  const findings = useMemo(() => (data?.findings || [])
+    .filter(f => tenancy === 'All' || f.tenancy === tenancy)
+    .filter(f => check === 'All' || f.check === check)
+    .filter(f => !q || [f.name, f.resource_id, f.resource_type, f.compartment, f.owner, f.region, f.tenancy, f.check]
+      .some(v => (v || '').toLowerCase().includes(q))),
+    [data, tenancy, check, q]);
+  const findingsTotal = findings.reduce((s, f) => s + f.cost, 0);
+  const fs = data?.findings_summary;
 
   const copy = (id: string) => {
     try { navigator.clipboard.writeText(id); setCopied(id); setTimeout(() => setCopied(''), 1500); } catch { /* clipboard blocked */ }
@@ -136,11 +161,24 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
               <p className="text-2xl font-black text-slate-900 tracking-tight">{tenancies[0]?.[0] ?? '—'}</p>
               {tenancies[0] && <p className="text-xl font-black text-rose-600 tracking-tight mt-1">{money(tenancies[0][1].cost)}</p>}
             </div>
-            <div className="bg-white p-10 rounded-[48px] border border-slate-200 shadow-sm">
-              <h3 className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-2">Cleanup checks</h3>
-              <p className="text-lg font-black text-slate-900 tracking-tight">Coming next</p>
-              <p className="text-xs font-bold text-slate-400 mt-2">Unattached volumes, stopped instances and idle resources need one-time read-only access in each child tenancy.</p>
-            </div>
+            <button onClick={() => setView('cleanup')} className="text-left bg-white p-10 rounded-[48px] border border-slate-200 shadow-sm hover:border-rose-300 transition-colors">
+              <h3 className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-2">Potential savings / month</h3>
+              {fs ? (<>
+                <p className="text-4xl font-black text-rose-600 tracking-tighter">{money(fs.est_monthly_usd)}</p>
+                <p className="text-xs font-bold text-slate-400 mt-2">{fs.count} items to review · {money(fs.likely_usd)} likely waste</p>
+              </>) : (
+                <p className="text-sm font-bold text-slate-400">Update the OCI function to see cleanup findings.</p>
+              )}
+            </button>
+          </div>
+
+          <div className="flex bg-slate-100 p-1.5 rounded-2xl w-fit">
+            {([['inventory', `Inventory · ${data.summary.count}`, Server], ['cleanup', `Cleanup findings · ${fs?.count ?? 0}`, Trash2]] as const).map(([id, label, Icon]) => (
+              <button key={id} onClick={() => setView(id)}
+                className={`px-6 py-3 rounded-xl text-[11px] font-black uppercase tracking-widest flex items-center gap-2 transition-all ${view === id ? 'bg-white text-rose-700 shadow-sm' : 'text-slate-500 hover:text-slate-900'}`}>
+                <Icon size={14} /> {label}
+              </button>
+            ))}
           </div>
 
           <div className="bg-white rounded-[56px] border border-slate-200 p-10 shadow-sm space-y-6">
@@ -152,13 +190,23 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
                   <button key={t} onClick={() => { setTenancy(t); setService('All'); }} className={chip(tenancy === t)}>{t} · {money(v.cost)}</button>
                 ))}
               </div>
-              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 pt-2">Service</p>
-              <div className="flex flex-wrap gap-2">
-                <button onClick={() => setService('All')} className={chip(service === 'All')}>All</button>
-                {services.map(([s, c]) => (
-                  <button key={s} onClick={() => setService(s)} className={chip(service === s)}>{s} · {money(c)}</button>
-                ))}
-              </div>
+              {view === 'inventory' ? (<>
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 pt-2">Service</p>
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => setService('All')} className={chip(service === 'All')}>All</button>
+                  {services.map(([s, c]) => (
+                    <button key={s} onClick={() => setService(s)} className={chip(service === s)}>{s} · {money(c)}</button>
+                  ))}
+                </div>
+              </>) : (<>
+                <p className="text-[10px] font-black uppercase tracking-widest text-slate-400 pt-2">Check</p>
+                <div className="flex flex-wrap gap-2">
+                  <button onClick={() => setCheck('All')} className={chip(check === 'All')}>All</button>
+                  {checks.map(([c, v]) => (
+                    <button key={c} onClick={() => setCheck(c)} className={chip(check === c)}>{c} · {money(v)}</button>
+                  ))}
+                </div>
+              </>)}
             </div>
 
             <div className="relative w-full md:w-96">
@@ -167,6 +215,7 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
                 className="w-full pl-11 pr-4 py-3 rounded-2xl border border-slate-200 bg-white text-sm font-bold outline-none focus:ring-2 focus:ring-rose-500" />
             </div>
 
+            {view === 'inventory' && (<>
             <div className="overflow-x-auto">
               <table className="w-full text-left text-sm">
                 <thead>
@@ -220,6 +269,66 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
               <Info size={14} className="shrink-0 mt-0.5" />
               Actual billed cost from OCI's Usage API for the parent tenancy (consolidated across all child tenancies). Charges that are not tied to a single resource appear as "(no resource ID)". Resources without a display name are listed by their full OCID. Click "copy OCID" to copy it.
             </p>
+            </>)}
+
+            {view === 'cleanup' && (<>
+            <div className="overflow-x-auto">
+              <table className="w-full text-left text-sm">
+                <thead>
+                  <tr className="text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">
+                    <th className="py-3 pr-4">Resource</th>
+                    <th className="py-3 pr-4">Tenancy / compartment</th>
+                    <th className="py-3 pr-4">Confidence</th>
+                    <th className="py-3 pr-4">Why flagged</th>
+                    <th className="py-3 pr-4">Billed</th>
+                    <th className="py-3 text-right">{period === 'mtd' ? 'MTD $' : '$ / month'}</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {findings.map(f => (
+                    <tr key={f.tenancy + f.resource_id + f.check} className="border-b border-slate-50 align-top hover:bg-slate-50/60">
+                      <td className="py-4 pr-4">
+                        {f.name
+                          ? <div className="font-black text-slate-900 break-all">{f.name}</div>
+                          : <div className="font-mono text-[11px] font-bold text-slate-700 break-all max-w-[22rem]">{f.resource_id}</div>}
+                        <button onClick={() => copy(f.resource_id)} title={`${f.resource_id} (click to copy)`}
+                          className="text-[11px] font-bold text-slate-400 hover:text-rose-600">
+                          {copied === f.resource_id ? 'copied ✓' : `${f.resource_type} · copy OCID`}
+                        </button>
+                      </td>
+                      <td className="py-4 pr-4">
+                        <div className="font-bold text-slate-700">{f.tenancy} <span className="text-[11px] text-slate-400">· {f.region}</span></div>
+                        <div className="text-[11px] font-bold text-slate-400 break-all">{f.compartment || '—'}</div>
+                      </td>
+                      <td className="py-4 pr-4">
+                        <span className={`px-3 py-1 rounded-full text-[10px] font-black uppercase ${f.confidence === 'likely' ? 'bg-red-50 text-red-700' : 'bg-amber-50 text-amber-700'}`}>{f.confidence}</span>
+                      </td>
+                      <td className="py-4 pr-4 max-w-md">
+                        <div className="font-black text-slate-800">{f.check}</div>
+                        <div className="text-[11px] font-bold text-slate-500 mt-1">{f.reason}</div>
+                        {f.owner && <div className="text-[11px] font-bold text-slate-400 mt-1">Created by {f.owner}</div>}
+                      </td>
+                      <td className="py-4 pr-4 text-xs font-bold text-slate-500 whitespace-nowrap">{f.months_billed ? `${f.months_billed} of last ${fs?.history_months ?? 6} mo` : '—'}</td>
+                      <td className="py-4 text-right font-mono font-black text-slate-900 whitespace-nowrap">{money(f.cost)}</td>
+                    </tr>
+                  ))}
+                </tbody>
+                <tfoot>
+                  <tr>
+                    <td colSpan={5} className="pt-5 text-right text-[11px] font-black uppercase tracking-widest text-slate-400">
+                      {findings.length} finding{findings.length === 1 ? '' : 's'} shown
+                    </td>
+                    <td className="pt-5 text-right font-mono font-black text-slate-900">{money(findingsTotal)}</td>
+                  </tr>
+                </tfoot>
+              </table>
+              {findings.length === 0 && <p className="text-center py-16 text-slate-300 font-black uppercase tracking-widest">{fs ? 'No cleanup findings' : 'Update the OCI function to see cleanup findings'}</p>}
+            </div>
+            <p className="text-xs font-bold text-slate-400 flex items-start gap-2">
+              <Info size={14} className="shrink-0 mt-0.5" />
+              Findings come from billing patterns only (no access into child tenancies): volumes and load balancers in compartments where no compute is billed, databases billed for storage but not OCPU/ECPU, and backups or images billed every month for the last {fs?.history_months ?? 6} months. "Likely" means a strong signal; "review" means check before deleting. Confirm in the OCI console before removing anything.
+            </p>
+            </>)}
           </div>
 
           {data.warnings?.length > 0 && (
