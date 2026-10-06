@@ -83,6 +83,22 @@ const CustomTick = (props: any) => {
   );
 };
 
+// OCI only: many tenancy/region bars, so labels are angled to avoid overlap
+const AngledTick = (props: any) => {
+  const { x, y, payload } = props;
+  const label = String(payload.value);
+  const match = label.match(/^(.*?)\s*\((.*?)\)$/);
+  return (
+    <g transform={`translate(${x},${y + 8}) rotate(-35)`}>
+      <title>{label}</title>
+      <text x={0} y={0} textAnchor="end" fill="#1e293b" fontSize={12} fontWeight="900" className="uppercase tracking-tight font-black">
+        {match ? match[1] : label}
+      </text>
+      {match && <text x={0} y={16} textAnchor="end" fill="#3b82f6" fontSize={11} fontWeight="800">{match[2]}</text>}
+    </g>
+  );
+};
+
 export default function App() {
   const [provider, setProvider] = useState<CloudProvider>('aws');
   const [billingHistory, setBillingHistory] = useState<MonthlyData[]>(generateMockData('aws'));
@@ -478,12 +494,12 @@ if __name__ == '__main__':
                   <h2 className="text-[13px] font-black uppercase tracking-[0.2em] mb-16 flex items-center gap-4"><span className={`w-4 h-4 rounded-full animate-pulse ${brandColorClass}`} /> {provider === 'aws' ? 'Regional' : 'Tenancy'} Distribution</h2>
                   <div className="h-[550px]">
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={aggLatest} margin={{ bottom: 60 }}>
+                      <BarChart data={aggLatest} margin={provider === 'oci' ? { bottom: 20, left: 60 } : { bottom: 60 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                        <XAxis dataKey="label" interval={0} axisLine={false} tickLine={false} tick={<CustomTick />} />
+                        <XAxis dataKey="label" interval={0} axisLine={false} tickLine={false} tick={provider === 'oci' ? <AngledTick /> : <CustomTick />} height={provider === 'oci' ? 150 : undefined} />
                         <YAxis tickFormatter={(val) => `$${val.toLocaleString()}`} stroke="#cbd5e1" fontSize={11} axisLine={false} tickLine={false} fontWeight="black" />
                         <Tooltip cursor={{ fill: '#f8fafc', radius: 32 }} contentStyle={{ borderRadius: '48px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)', padding: '20px' }} />
-                        <Bar dataKey="cost" radius={[24, 24, 0, 0]} barSize={80}>
+                        <Bar dataKey="cost" radius={provider === 'oci' ? [16, 16, 0, 0] : [24, 24, 0, 0]} barSize={provider === 'oci' ? undefined : 80} maxBarSize={80}>
                           {aggLatest.map((entry, index) => (
                             <Cell key={`cell-${index}`} fill={
                               entry.color === 'blue' ? '#3b82f6' : 
@@ -540,9 +556,17 @@ if __name__ == '__main__':
                                       b.color === 'orange' ? 'text-orange-600' : 
                                       b.color === 'red' ? 'text-red-600' : 'text-slate-600';
                                     
+                                    const ociMatch = provider === 'oci' ? String(b.label).match(/^(.*?)\s*\((.*?)\)$/) : null;
                                     return (
-                                      <div key={i} className={`px-4 py-5 rounded-[40px] border-2 ${b.cost > 0 ? 'bg-white border-slate-100 shadow-md' : 'opacity-20'} transition-all hover:scale-[1.05]`}>
-                                        <span className={`text-[10px] font-black uppercase tracking-tight block text-center mb-0.5 ${colorClass}`}>{String(b.label).split(' ')[0]}</span>
+                                      <div key={i} title={String(b.label)} className={`px-4 py-5 rounded-[40px] border-2 ${b.cost > 0 ? 'bg-white border-slate-100 shadow-md' : 'opacity-20'} transition-all hover:scale-[1.05]`}>
+                                        {provider === 'oci' ? (
+                                          <>
+                                            <span className={`text-[10px] font-black uppercase tracking-tight block text-center truncate ${colorClass}`}>{ociMatch ? ociMatch[1] : String(b.label)}</span>
+                                            {ociMatch && <span className="text-[10px] font-bold text-slate-400 tracking-tight block text-center truncate mb-0.5">{ociMatch[2]}</span>}
+                                          </>
+                                        ) : (
+                                          <span className={`text-[10px] font-black uppercase tracking-tight block text-center mb-0.5 ${colorClass}`}>{String(b.label).split(' ')[0]}</span>
+                                        )}
                                         <span className="text-lg font-black tracking-tighter block text-center">${b.cost.toLocaleString()}</span>
                                       </div>
                                     );
