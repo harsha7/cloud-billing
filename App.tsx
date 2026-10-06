@@ -13,6 +13,7 @@ import {
   ShieldAlert, FileText, Lock, ListOrdered, MousePointer2, Cpu
 } from 'lucide-react';
 import { MonthlyData, CloudCredentials, BillingEntry, CloudProvider } from './types';
+import InventoryTab from './InventoryTab';
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -108,7 +109,9 @@ const DEFAULT_ENDPOINTS: Record<CloudProvider, string> = {
 export default function App() {
   const [provider, setProvider] = useState<CloudProvider>('aws');
   const [billingHistory, setBillingHistory] = useState<MonthlyData[]>(generateMockData('aws'));
-  const [activeTab, setActiveTab] = useState<'overview' | 'trends' | 'comparison' | 'services'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'trends' | 'comparison' | 'services' | 'inventory'>('overview');
+  // Inventory & Cleanup is AWS-only
+  useEffect(() => { if (provider === 'oci' && activeTab === 'inventory') setActiveTab('overview'); }, [provider, activeTab]);
   const [isFetching, setIsFetching] = useState(false);
   const [showLambdaInfo, setShowLambdaInfo] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
@@ -491,7 +494,8 @@ if __name__ == '__main__':
               { id: 'overview', icon: LayoutDashboard, label: 'Dashboard' },
               { id: 'trends', icon: TrendingUp, label: '12M History' },
               { id: 'comparison', icon: ArrowRightLeft, label: 'MoM Comparison' },
-              { id: 'services', icon: Layers, label: 'Service Explorer' }
+              { id: 'services', icon: Layers, label: 'Service Explorer' },
+              ...(provider === 'aws' ? [{ id: 'inventory', icon: Server, label: 'Inventory & Cleanup' }] : [])
             ].map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl text-sm font-bold transition-all ${activeTab === tab.id ? `${provider === 'aws' ? 'bg-blue-50 text-blue-700' : 'bg-rose-50 text-rose-700'} shadow-sm` : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}>
                 <tab.icon size={20} /> {tab.label}
@@ -706,6 +710,8 @@ if __name__ == '__main__':
                )}
             </div>
           )}
+
+          {activeTab === 'inventory' && provider === 'aws' && <InventoryTab />}
 
           {activeTab === 'services' && (
             <div className="animate-in fade-in slide-in-from-bottom-8 duration-700 space-y-12">
