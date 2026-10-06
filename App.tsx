@@ -234,6 +234,8 @@ export default function App() {
 
   const currentMonthData = billingHistory[billingHistory.length - 1] || { month: 'N/A', entries: [] };
   const aggLatest = useMemo(() => getAggregatedData(currentMonthData), [currentMonthData, provider]);
+  // OCI: hide tenancy/region pairs whose cost rounds to $0
+  const chartData = provider === 'oci' ? aggLatest.filter(x => x.cost >= 0.005) : aggLatest;
   const totalSpendLatest = currentMonthData.entries.reduce((sum, e) => sum + e.cost, 0);
 
   const comparisonData = useMemo(() => {
@@ -494,13 +496,13 @@ if __name__ == '__main__':
                   <h2 className="text-[13px] font-black uppercase tracking-[0.2em] mb-16 flex items-center gap-4"><span className={`w-4 h-4 rounded-full animate-pulse ${brandColorClass}`} /> {provider === 'aws' ? 'Regional' : 'Tenancy'} Distribution</h2>
                   <div className="h-[550px]">
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={aggLatest} margin={provider === 'oci' ? { bottom: 20, left: 60 } : { bottom: 60 }}>
+                      <BarChart data={chartData} margin={provider === 'oci' ? { bottom: 20, left: 60 } : { bottom: 60 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
                         <XAxis dataKey="label" interval={0} axisLine={false} tickLine={false} tick={provider === 'oci' ? <AngledTick /> : <CustomTick />} height={provider === 'oci' ? 150 : undefined} />
                         <YAxis tickFormatter={(val) => `$${val.toLocaleString()}`} stroke="#cbd5e1" fontSize={11} axisLine={false} tickLine={false} fontWeight="black" />
                         <Tooltip cursor={{ fill: '#f8fafc', radius: 32 }} contentStyle={{ borderRadius: '48px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)', padding: '20px' }} />
                         <Bar dataKey="cost" radius={provider === 'oci' ? [16, 16, 0, 0] : [24, 24, 0, 0]} barSize={provider === 'oci' ? undefined : 80} maxBarSize={80}>
-                          {aggLatest.map((entry, index) => (
+                          {chartData.map((entry, index) => (
                             <Cell key={`cell-${index}`} fill={
                               entry.color === 'blue' ? '#3b82f6' : 
                               entry.color === 'indigo' ? '#6366f1' : 
@@ -539,7 +541,7 @@ if __name__ == '__main__':
                     <tbody className="divide-y divide-slate-100">
                       {[...billingHistory].reverse().map((month, idx) => {
                         const total = month.entries.reduce((s, e) => s + e.cost, 0);
-                        const breakdown = getAggregatedData(month);
+                        const breakdown = provider === 'oci' ? getAggregatedData(month).filter(b => b.cost >= 0.005) : getAggregatedData(month);
                         return (
                           <tr key={idx} className="group hover:bg-slate-50 transition-all">
                             <td className="py-12 px-16 font-black text-slate-900 text-lg uppercase">{month.month}</td>
