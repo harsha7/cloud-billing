@@ -179,7 +179,9 @@ export default function App() {
         throw new Error(`Server Error (${response.status}): ${errorText.substring(0, 50)}`);
       }
 
-      const data = await response.json();
+      const raw = await response.json();
+      // AWS Lambda returns a bare array; the multi-tenancy OCI function returns { data: [...], summary: {...} }
+      const data = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.data) ? raw.data : raw);
       if (Array.isArray(data)) {
         setBillingHistory(data);
         setIsRealData(true);
