@@ -1,5 +1,5 @@
 
-import React, { useState, useMemo, useEffect } from 'react';
+import React, { useState, useMemo, useEffect, useRef } from 'react';
 import { 
   BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList
 } from 'recharts';
@@ -99,6 +99,12 @@ const AngledTick = (props: any) => {
   );
 };
 
+// Default sync endpoints; the dashboard loads from these automatically
+const DEFAULT_ENDPOINTS: Record<CloudProvider, string> = {
+  aws: 'https://d4gc2r3hgt3mtis6y6cn4uzvqe0cwqtv.lambda-url.us-east-1.on.aws/',
+  oci: 'https://k2nbuc3rkdwy3uwmjhtwx663sm.apigateway.us-ashburn-1.oci.customer-oci.com/cloudspend',
+};
+
 export default function App() {
   const [provider, setProvider] = useState<CloudProvider>('aws');
   const [billingHistory, setBillingHistory] = useState<MonthlyData[]>(generateMockData('aws'));
@@ -106,7 +112,8 @@ export default function App() {
   const [isFetching, setIsFetching] = useState(false);
   const [showLambdaInfo, setShowLambdaInfo] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
-  const [credentials, setCredentials] = useState<CloudCredentials>({ endpoint: '' });
+  const [credentials, setCredentials] = useState<CloudCredentials>({ endpoint: DEFAULT_ENDPOINTS.aws });
+  const activeProviderRef = useRef<CloudProvider>('aws');
   
   const [isRealData, setIsRealData] = useState(false);
   const [serviceSearch, setServiceSearch] = useState("");
@@ -153,6 +160,10 @@ export default function App() {
     setTargetMonthIdx(mock.length - 1);
     setDrillDownMonthIdx(mock.length - 1);
     setDrillDownTarget(provider === 'aws' ? AWS_TARGETS[0].key : OCI_TARGETS[0].key);
+    // Load real data automatically for this provider
+    activeProviderRef.current = provider;
+    setCredentials({ endpoint: DEFAULT_ENDPOINTS[provider] });
+    runSync(DEFAULT_ENDPOINTS[provider], provider, true);
   }, [provider]);
 
   useEffect(() => {
@@ -174,21 +185,28 @@ export default function App() {
 
   const syncData = async (e: React.FormEvent) => {
     e.preventDefault();
-    if (!credentials.endpoint?.trim()) {
+    runSync(credentials.endpoint || '', provider, false);
+  };
+
+  // silent = automatic load: no success toast, errors still shown
+  const runSync = async (endpoint: string, prov: CloudProvider, silent: boolean) => {
+    if (!endpoint.trim()) {
       showToast("Missing Endpoint URL", "error");
       return;
     }
-    if (!credentials.endpoint.startsWith('https://')) {
+    if (!endpoint.startsWith('https://')) {
       showToast("Security Error: URL must start with https://", "error");
       return;
     }
     setIsFetching(true);
     try {
-      const response = await fetch(credentials.endpoint, {
+      const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider })
+        body: JSON.stringify({ provider: prov })
       });
+      // Ignore responses that arrive after the user switched provider
+      if (activeProviderRef.current !== prov) return;
       
       if (!response.ok) {
         const errorText = await response.text();
@@ -198,18 +216,23 @@ export default function App() {
       const raw = await response.json();
       // AWS Lambda returns a bare array; the multi-tenancy OCI function returns { data: [...], summary: {...} }
       const data = Array.isArray(raw) ? raw : (raw && Array.isArray(raw.data) ? raw.data : raw);
+      if (activeProviderRef.current !== prov) return;
       if (Array.isArray(data)) {
         setBillingHistory(data);
         setIsRealData(true);
-        showToast(`${provider.toUpperCase()} Data Sync Success`);
+        setBaseMonthIdx(Math.max(0, data.length - 2));
+        setTargetMonthIdx(Math.max(0, data.length - 1));
+        setDrillDownMonthIdx(Math.max(0, data.length - 1));
+        if (!silent) showToast(`${prov.toUpperCase()} Data Sync Success`);
       } else throw new Error(data.error || "Invalid response format");
     } catch (err: any) {
+      if (activeProviderRef.current !== prov) return;
       console.error("Sync Error Details:", err);
       const isCors = err.message.includes('Failed to fetch') || err.name === 'TypeError';
       showToast(isCors 
         ? "CORS/Network Error: Check API Gateway CORS settings & URL" 
         : `Sync Error: ${err.message}`, "error");
-    } finally { setIsFetching(false); }
+    } finally { if (activeProviderRef.current === prov) setIsFetching(false); }
   };
 
   const getAggregatedData = (month: MonthlyData) => {
