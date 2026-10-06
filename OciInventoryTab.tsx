@@ -163,7 +163,7 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
 
             <div className="relative w-full md:w-96">
               <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search OCID, type, compartment, owner, SKU…"
+              <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name, OCID, type, compartment, owner, SKU…"
                 className="w-full pl-11 pr-4 py-3 rounded-2xl border border-slate-200 bg-white text-sm font-bold outline-none focus:ring-2 focus:ring-rose-500" />
             </div>
 
@@ -183,10 +183,12 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
                   {rows.map(r => (
                     <tr key={r.tenancy_ocid + r.resource_id} className="border-b border-slate-50 align-top hover:bg-slate-50/60">
                       <td className="py-4 pr-4">
-                        <div className="font-black text-slate-900">{r.name || r.resource_type}</div>
+                        {r.name
+                          ? <div className="font-black text-slate-900 break-all">{r.name}</div>
+                          : <div className="font-mono text-[11px] font-bold text-slate-700 break-all max-w-[22rem]">{r.resource_id}</div>}
                         <button onClick={() => copy(r.resource_id)} title={`${r.resource_id} (click to copy)`}
-                          className="text-[11px] font-bold text-slate-400 hover:text-rose-600 font-mono">
-                          {copied === r.resource_id ? 'copied ✓' : `${r.name ? r.resource_type + ' · ' : ''}${shortId(r.resource_id)}`}
+                          className="text-[11px] font-bold text-slate-400 hover:text-rose-600">
+                          {copied === r.resource_id ? 'copied ✓' : `${r.resource_type}${r.name && r.resource_id.startsWith('ocid1.') ? ' · ' + shortId(r.resource_id) : ''} · copy OCID`}
                         </button>
                       </td>
                       <td className="py-4 pr-4">
@@ -216,7 +218,7 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
             </div>
             <p className="text-xs font-bold text-slate-400 flex items-start gap-2">
               <Info size={14} className="shrink-0 mt-0.5" />
-              Actual billed cost from OCI's Usage API for the parent tenancy (consolidated across all child tenancies). Charges that are not tied to a single resource appear as "(no resource ID)". Click an ID to copy the full OCID.
+              Actual billed cost from OCI's Usage API for the parent tenancy (consolidated across all child tenancies). Charges that are not tied to a single resource appear as "(no resource ID)". Resources without a display name are listed by their full OCID. Click "copy OCID" to copy it.
             </p>
           </div>
 
