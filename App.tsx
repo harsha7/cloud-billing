@@ -1,7 +1,7 @@
 
 import React, { useState, useMemo, useEffect } from 'react';
 import { 
-  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell
+  BarChart, Bar, XAxis, YAxis, CartesianGrid, Tooltip, ResponsiveContainer, Cell, LabelList
 } from 'recharts';
 import { 
   Activity, TrendingUp, DollarSign, Globe, LayoutDashboard, History,
@@ -512,6 +512,10 @@ if __name__ == '__main__':
                               entry.color === 'red' ? '#ef4444' : '#64748b'
                             } />
                           ))}
+                          {provider === 'oci' && (
+                            <LabelList dataKey="cost" position="top" offset={8} fill="#0f172a" fontSize={12} fontWeight={900}
+                              formatter={(v: any) => { const n = Number(v) || 0; if (n < 0.01) return ''; return n < 1 ? `$${n.toFixed(2)}` : `$${Math.round(n).toLocaleString()}`; }} />
+                          )}
                         </Bar>
                       </BarChart>
                     </ResponsiveContainer>
