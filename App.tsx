@@ -260,6 +260,16 @@ export default function App() {
   // OCI: hide tenancy/region pairs whose cost rounds to $0
   const chartData = provider === 'oci' ? aggLatest.filter(x => x.cost >= 0.005) : aggLatest;
   const totalSpendLatest = currentMonthData.entries.reduce((sum, e) => sum + e.cost, 0);
+  // OCI: tenancy with the highest total cost (all regions) in the latest month
+  const topTenancy = useMemo(() => {
+    const totals: Record<string, number> = {};
+    currentMonthData.entries.forEach(e => {
+      const t = String(e.tenancy || e.Tenancy || 'Unknown');
+      totals[t] = (totals[t] || 0) + e.cost;
+    });
+    const top = Object.entries(totals).sort((a, b) => b[1] - a[1])[0];
+    return top ? { name: top[0], cost: top[1] } : null;
+  }, [currentMonthData]);
 
   const comparisonData = useMemo(() => {
     const baseAgg = getAggregatedData(billingHistory[baseMonthIdx] || billingHistory[0]);
@@ -502,8 +512,18 @@ if __name__ == '__main__':
                   <div className="bg-white p-12 rounded-[64px] border border-slate-200 shadow-sm relative overflow-hidden group">
                     <div className={`absolute -top-6 -right-6 p-12 opacity-[0.03] ${provider === 'aws' ? 'text-indigo-600' : 'text-amber-600'}`}><Globe size={160} /></div>
                     <div className="flex justify-between items-start mb-8"><div className={`p-5 ${provider === 'aws' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600'} rounded-[32px]`}><Globe size={32} /></div></div>
-                    <h3 className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-2">Primary {provider === 'aws' ? 'Region' : 'Tenancy'}</h3>
-                    <p className="text-3xl font-black text-slate-900 tracking-tight">{aggLatest[0]?.label}</p>
+                    {provider === 'oci' ? (
+                      <>
+                        <h3 className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-2">Highest Spend · {currentMonthData.month}</h3>
+                        <p className="text-3xl font-black text-slate-900 tracking-tight">{topTenancy?.name ?? '—'}</p>
+                        {topTenancy && <p className="text-xl font-black text-amber-600 tracking-tight mt-2">${topTenancy.cost.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}</p>}
+                      </>
+                    ) : (
+                      <>
+                        <h3 className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-2">Primary Region</h3>
+                        <p className="text-3xl font-black text-slate-900 tracking-tight">{aggLatest[0]?.label}</p>
+                      </>
+                    )}
                   </div>
                   <div className="bg-white p-12 rounded-[64px] border border-slate-200 shadow-sm">
                     <div className="flex justify-between items-start mb-8"><div className="p-5 bg-emerald-50 text-emerald-600 rounded-[32px]"><ShieldCheck size={32} /></div></div>
