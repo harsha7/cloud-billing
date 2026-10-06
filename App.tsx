@@ -311,8 +311,30 @@ export default function App() {
        serviceMap[name] = (serviceMap[name] || 0) + e.cost;
     });
 
-    return Object.entries(serviceMap).map(([name, cost]) => ({ name, cost })).sort((a,b) => b.cost - a.cost);
+    return Object.entries(serviceMap).map(([name, cost]) => ({ name, cost }))
+      .filter(s => provider !== 'oci' || s.cost >= 0.005) // OCI: hide $0 services
+      .sort((a,b) => b.cost - a.cost);
   }, [drillDownMonthIdx, drillDownTarget, billingHistory, provider, currentTargets, isRealData]);
+
+  // OCI: only list tenancy/region pairs that have cost in the selected month
+  const explorerTargets = useMemo(() => {
+    if (provider !== 'oci' || !isRealData) return currentTargets;
+    const month = billingHistory[drillDownMonthIdx];
+    if (!month) return currentTargets;
+    const totals: Record<string, number> = {};
+    month.entries.forEach(e => {
+      const k = `${String(e.tenancy || e.Tenancy || 'Unknown')}|${String(e.region || e.Region || 'Global')}`;
+      totals[k] = (totals[k] || 0) + e.cost;
+    });
+    return currentTargets.filter(t => (totals[String(t.key)] || 0) >= 0.005);
+  }, [provider, isRealData, billingHistory, drillDownMonthIdx, currentTargets]);
+
+  // Keep the selection on an entry that has data
+  useEffect(() => {
+    if (provider === 'oci' && isRealData && explorerTargets.length > 0 && !explorerTargets.some(t => t.key === drillDownTarget)) {
+      setDrillDownTarget(String(explorerTargets[0].key));
+    }
+  }, [explorerTargets, drillDownTarget, provider, isRealData]);
 
   const ociFunctionScript = `import io
 import json
@@ -698,7 +720,7 @@ if __name__ == '__main__':
                     <div className="lg:col-span-1 space-y-4">
                       <h3 className="text-[11px] font-black uppercase text-slate-400 tracking-widest px-4">Select {provider === 'aws' ? 'Region' : 'Tenancy'}</h3>
                       <div className="space-y-2">
-                        {currentTargets.map(t => (
+                        {explorerTargets.map(t => (
                           <button key={t.key} onClick={() => setDrillDownTarget(String(t.key))} className={`w-full text-left px-6 py-4 rounded-2xl font-bold transition-all ${drillDownTarget === t.key ? `${brandColorClass} text-white shadow-lg scale-[1.02]` : 'bg-white border border-slate-100 text-slate-600 hover:bg-slate-50'}`}>
                             {t.label}
                           </button>
