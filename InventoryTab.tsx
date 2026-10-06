@@ -5,7 +5,8 @@ import { RefreshCw, Search, AlertTriangle, Server, Trash2, Layers, Info, Setting
 // The Function URL is NOT stored in this public repo: it is entered once on the tab
 // and kept only in this browser's localStorage.
 const STORAGE_KEY = 'cloudspend.inventoryEndpoint';
-const readEndpoint = () => { try { return localStorage.getItem(STORAGE_KEY) || ''; } catch { return ''; } };
+const DEFAULT_ENDPOINT = 'https://2w6x3kdxyb64swbcct3s4njaci0qngah.lambda-url.us-east-1.on.aws/';
+const readEndpoint = () => { try { return localStorage.getItem(STORAGE_KEY) || DEFAULT_ENDPOINT; } catch { return DEFAULT_ENDPOINT; } };
 
 const REGION_OPTIONS: { value: string; label: string }[] = [
   { value: 'ca-central-1', label: 'Canada Central (X-ray)' },
