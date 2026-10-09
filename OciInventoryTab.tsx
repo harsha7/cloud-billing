@@ -24,14 +24,20 @@ type OciInventory = {
   warnings: string[]; error?: string;
 };
 
-const cache = new Map<string, OciInventory>(); // per period, kept for the browser session
+const cache = new Map<string, OciInventory>(); // per endpoint + period, kept for the browser session
 const money = (n: number) => `$${n.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
 const shortId = (id: string) => (id.startsWith('ocid1.') ? `…${id.slice(-10)}` : id);
 const fmtDate = (d: string) => new Date(d + 'T00:00:00Z').toLocaleDateString(undefined, { month: 'short', day: 'numeric', year: 'numeric', timeZone: 'UTC' });
 
-export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
+// Also used for Google Cloud: its function returns the same shape, with projects in place of tenancies.
+export default function OciInventoryTab({ endpoint, cloud = 'oci' }: { endpoint: string; cloud?: 'oci' | 'gcp' }) {
+  const gcp = cloud === 'gcp';
+  const T = gcp
+    ? { unit: 'project', units: 'projects', Unit: 'Project', place: 'Project ID', idName: 'ID', fn: 'Google Cloud function' }
+    : { unit: 'tenancy', units: 'tenancies', Unit: 'Tenancy', place: 'Compartment', idName: 'OCID', fn: 'OCI function' };
+  const ck = (p: string) => `${endpoint}|${p}`;
   const [period, setPeriod] = useState<'last_month' | 'mtd'>('last_month');
-  const [data, setData] = useState<OciInventory | null>(cache.get('last_month') || null);
+  const [data, setData] = useState<OciInventory | null>(cache.get(ck('last_month')) || null);
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [elapsed, setElapsed] = useState(0);
@@ -44,7 +50,7 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
   const reqId = useRef(0);
 
   const load = async (p: 'last_month' | 'mtd', force = false) => {
-    if (!force && cache.has(p)) { setData(cache.get(p)!); setError(null); return; }
+    if (!force && cache.has(ck(p))) { setData(cache.get(ck(p))!); setError(null); return; }
     const id = ++reqId.current;
     setLoading(true); setError(null); setElapsed(0);
     const t0 = Date.now();
@@ -57,12 +63,12 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
       const json: OciInventory = await resp.json();
       if (id !== reqId.current) return;
       if (!resp.ok || json.error) throw new Error(json.error || `HTTP ${resp.status}`);
-      if (json.mode !== 'inventory') throw new Error('The OCI function has not been updated with inventory mode yet.');
-      cache.set(p, json);
+      if (json.mode !== 'inventory') throw new Error(`The ${T.fn} has not been updated with inventory mode yet.`);
+      cache.set(ck(p), json);
       setData(json);
     } catch (e: any) {
       if (id !== reqId.current) return;
-      setError(e?.message?.includes('Failed to fetch') ? 'Could not reach the OCI function (network or CORS).' : e?.message || String(e));
+      setError(e?.message?.includes('Failed to fetch') ? `Could not reach the ${T.fn} (network or CORS).` : e?.message || String(e));
     } finally {
       clearInterval(timer);
       if (id === reqId.current) setLoading(false);
@@ -116,7 +122,7 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
         <div>
           <h2 className="text-3xl font-black text-slate-900 tracking-tighter">Inventory & Cleanup</h2>
           <p className="text-[11px] font-black uppercase text-slate-400 tracking-widest mt-1">
-            Actual billed cost per resource · all tenancies{data ? ` · ${fmtDate(data.period_start)} – ${fmtDate(data.period_end)}` : ''}
+            Actual billed cost per resource · all {T.units}{data ? ` · ${fmtDate(data.period_start)} – ${fmtDate(data.period_end)}` : ''}
           </p>
         </div>
         <div className="flex flex-wrap items-center gap-3">
@@ -138,7 +144,7 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
       {loading && !data && (
         <div className="bg-white rounded-[56px] border border-slate-200 p-20 text-center shadow-sm">
           <RefreshCw size={36} className="animate-spin text-rose-600 mx-auto mb-6" />
-          <p className="text-lg font-black text-slate-900">Loading resource costs for all tenancies… {elapsed}s</p>
+          <p className="text-lg font-black text-slate-900">Loading resource costs for all {T.units}… {elapsed}s</p>
         </div>
       )}
 
@@ -157,7 +163,7 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
               <p className="text-xs font-bold text-slate-400 mt-2">{data.summary.count} resources with charges</p>
             </div>
             <div className="bg-white p-10 rounded-[48px] border border-slate-200 shadow-sm">
-              <h3 className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-2">Highest-cost tenancy</h3>
+              <h3 className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-2">Highest-cost {T.unit}</h3>
               <p className="text-2xl font-black text-slate-900 tracking-tight">{tenancies[0]?.[0] ?? '—'}</p>
               {tenancies[0] && <p className="text-xl font-black text-rose-600 tracking-tight mt-1">{money(tenancies[0][1].cost)}</p>}
             </div>
@@ -167,7 +173,7 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
                 <p className="text-4xl font-black text-rose-600 tracking-tighter">{money(fs.est_monthly_usd)}</p>
                 <p className="text-xs font-bold text-slate-400 mt-2">{fs.count} items to review · {money(fs.likely_usd)} likely waste</p>
               </>) : (
-                <p className="text-sm font-bold text-slate-400">Update the OCI function to see cleanup findings.</p>
+                <p className="text-sm font-bold text-slate-400">{gcp ? 'Cleanup checks for Google Cloud are coming next.' : 'Update the OCI function to see cleanup findings.'}</p>
               )}
             </button>
           </div>
@@ -183,7 +189,7 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
 
           <div className="bg-white rounded-[56px] border border-slate-200 p-10 shadow-sm space-y-6">
             <div className="space-y-3">
-              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">Tenancy</p>
+              <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{T.Unit}</p>
               <div className="flex flex-wrap gap-2">
                 <button onClick={() => { setTenancy('All'); setService('All'); }} className={chip(tenancy === 'All')}>All · {money(data.summary.total_cost)}</button>
                 {tenancies.map(([t, v]) => (
@@ -211,7 +217,7 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
 
             <div className="relative w-full md:w-96">
               <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name, OCID, type, compartment, owner, SKU…"
+              <input value={query} onChange={e => setQuery(e.target.value)} placeholder={`Search name, ${T.idName}, type, ${T.place.toLowerCase()}, owner, SKU…`}
                 className="w-full pl-11 pr-4 py-3 rounded-2xl border border-slate-200 bg-white text-sm font-bold outline-none focus:ring-2 focus:ring-rose-500" />
             </div>
 
@@ -221,8 +227,8 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
                 <thead>
                   <tr className="text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">
                     <th className="py-3 pr-4">Resource</th>
-                    <th className="py-3 pr-4">Tenancy / region</th>
-                    <th className="py-3 pr-4">Compartment</th>
+                    <th className="py-3 pr-4">{T.Unit} / region</th>
+                    <th className="py-3 pr-4">{T.place}</th>
                     <th className="py-3 pr-4">What it bills for</th>
                     <th className="py-3 pr-4">Created by</th>
                     <th className="py-3 text-right">{period === 'mtd' ? 'MTD $' : 'Last month $'}</th>
@@ -237,7 +243,7 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
                           : <div className="font-mono text-[11px] font-bold text-slate-700 break-all max-w-[22rem]">{r.resource_id}</div>}
                         <button onClick={() => copy(r.resource_id)} title={`${r.resource_id} (click to copy)`}
                           className="text-[11px] font-bold text-slate-400 hover:text-rose-600">
-                          {copied === r.resource_id ? 'copied ✓' : `${r.resource_type}${r.name && r.resource_id.startsWith('ocid1.') ? ' · ' + shortId(r.resource_id) : ''} · copy OCID`}
+                          {copied === r.resource_id ? 'copied ✓' : `${r.resource_type}${r.name && r.resource_id.startsWith('ocid1.') ? ' · ' + shortId(r.resource_id) : ''} · copy ${T.idName}`}
                         </button>
                       </td>
                       <td className="py-4 pr-4">
@@ -267,7 +273,9 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
             </div>
             <p className="text-xs font-bold text-slate-400 flex items-start gap-2">
               <Info size={14} className="shrink-0 mt-0.5" />
-              Actual billed cost from OCI's Usage API for the parent tenancy (consolidated across all child tenancies). Charges that are not tied to a single resource appear as "(no resource ID)". Resources without a display name are listed by their full OCID. Click "copy OCID" to copy it.
+              {gcp
+                ? 'Actual billed cost (after credits) from the Cloud Billing detailed export in BigQuery, across every project on the billing account. Charges not tied to a single resource (support, tax, some network) appear per service.'
+                : `Actual billed cost from OCI's Usage API for the parent tenancy (consolidated across all child tenancies). Charges that are not tied to a single resource appear as "(no resource ID)". Resources without a display name are listed by their full OCID. Click "copy OCID" to copy it.`}
             </p>
             </>)}
 
@@ -277,7 +285,7 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
                 <thead>
                   <tr className="text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">
                     <th className="py-3 pr-4">Resource</th>
-                    <th className="py-3 pr-4">Tenancy / compartment</th>
+                    <th className="py-3 pr-4">{T.Unit} / {T.place.toLowerCase()}</th>
                     <th className="py-3 pr-4">Confidence</th>
                     <th className="py-3 pr-4">Why flagged</th>
                     <th className="py-3 pr-4">Billed</th>
@@ -293,7 +301,7 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
                           : <div className="font-mono text-[11px] font-bold text-slate-700 break-all max-w-[22rem]">{f.resource_id}</div>}
                         <button onClick={() => copy(f.resource_id)} title={`${f.resource_id} (click to copy)`}
                           className="text-[11px] font-bold text-slate-400 hover:text-rose-600">
-                          {copied === f.resource_id ? 'copied ✓' : `${f.resource_type} · copy OCID`}
+                          {copied === f.resource_id ? 'copied ✓' : `${f.resource_type} · copy ${T.idName}`}
                         </button>
                       </td>
                       <td className="py-4 pr-4">
@@ -322,7 +330,7 @@ export default function OciInventoryTab({ endpoint }: { endpoint: string }) {
                   </tr>
                 </tfoot>
               </table>
-              {findings.length === 0 && <p className="text-center py-16 text-slate-300 font-black uppercase tracking-widest">{fs ? 'No cleanup findings' : 'Update the OCI function to see cleanup findings'}</p>}
+              {findings.length === 0 && <p className="text-center py-16 text-slate-300 font-black uppercase tracking-widest">{fs ? 'No cleanup findings' : gcp ? 'Cleanup checks for Google Cloud are coming next' : 'Update the OCI function to see cleanup findings'}</p>}
             </div>
             <p className="text-xs font-bold text-slate-400 flex items-start gap-2">
               <Info size={14} className="shrink-0 mt-0.5" />
