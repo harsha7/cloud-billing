@@ -46,6 +46,8 @@ const getCompleted12MonthLabels = () => {
 
 const generateMockData = (provider: CloudProvider): MonthlyData[] => {
   const labels = getCompleted12MonthLabels();
+  // No sample numbers for GCP: show empty months until real data loads
+  if (provider === 'gcp') return labels.map(month => ({ month, entries: [] }));
   const targets = provider === 'aws' ? AWS_TARGETS : OCI_TARGETS;
   const services = provider === 'aws' 
     ? ["EC2-Instances", "VPC", "RDS", "S3", "CloudWatch", "ELB"] 
@@ -105,10 +107,15 @@ const AngledTick = (props: any) => {
 const DEFAULT_ENDPOINTS: Record<CloudProvider, string> = {
   aws: 'https://d4gc2r3hgt3mtis6y6cn4uzvqe0cwqtv.lambda-url.us-east-1.on.aws/',
   oci: 'https://k2nbuc3rkdwy3uwmjhtwx663sm.apigateway.us-ashburn-1.oci.customer-oci.com/cloudspend',
+  gcp: 'https://cloudspend-gcp-krrm524kja-pd.a.run.app',
 };
 
 export default function App() {
   const [provider, setProvider] = useState<CloudProvider>('aws');
+  // OCI and GCP both report per-account rows (tenancy / project) x region; AWS is per region
+  const multi = provider !== 'aws';
+  const unitLabel = provider === 'gcp' ? 'Project' : 'Tenancy';
+  const providerName = provider === 'gcp' ? 'Google Cloud' : provider === 'oci' ? 'OCI' : 'AWS';
   const [billingHistory, setBillingHistory] = useState<MonthlyData[]>(generateMockData('aws'));
   const [activeTab, setActiveTab] = useState<'overview' | 'trends' | 'comparison' | 'services' | 'inventory'>('overview');
   const [isFetching, setIsFetching] = useState(false);
@@ -136,7 +143,7 @@ export default function App() {
       const sortedPairs = Array.from(pairs).sort();
       return sortedPairs.map((pair, idx) => {
         const [tenancy, region] = pair.split('|');
-        const label = region === 'Global' ? tenancy : `${region.toUpperCase().replace(/-/g, ' ')} (${tenancy})`;
+        const label = region.toLowerCase() === 'global' ? tenancy : `${region.toUpperCase().replace(/-/g, ' ')} (${tenancy})`;
         return {
           key: pair,
           label: label,
@@ -146,7 +153,7 @@ export default function App() {
       });
     }
     // Show redirontechnologies regions for OCI if not synced or no data found
-    return OCI_TARGETS;
+    return provider === 'gcp' ? [] : OCI_TARGETS;
   }, [provider, isRealData, billingHistory]);
   const [baseMonthIdx, setBaseMonthIdx] = useState(0);
   const [targetMonthIdx, setTargetMonthIdx] = useState(0);
@@ -161,7 +168,7 @@ export default function App() {
     setBaseMonthIdx(mock.length - 2);
     setTargetMonthIdx(mock.length - 1);
     setDrillDownMonthIdx(mock.length - 1);
-    setDrillDownTarget(provider === 'aws' ? AWS_TARGETS[0].key : OCI_TARGETS[0].key);
+    setDrillDownTarget(provider === 'aws' ? AWS_TARGETS[0].key : provider === 'gcp' ? '' : OCI_TARGETS[0].key);
     // Load real data automatically for this provider
     activeProviderRef.current = provider;
     setCredentials({ endpoint: DEFAULT_ENDPOINTS[provider] });
@@ -169,13 +176,13 @@ export default function App() {
   }, [provider]);
 
   useEffect(() => {
-    if (provider === 'oci' && isRealData && billingHistory.length > 0 && !drillDownTarget) {
+    if (multi && isRealData && billingHistory.length > 0 && !drillDownTarget) {
       const lastMonth = billingHistory[billingHistory.length - 1];
       const allTenancies = Array.from(new Set(lastMonth.entries.map(e => e.tenancy || e.Tenancy).filter(Boolean)));
       if (allTenancies.length > 0) {
         setDrillDownTarget(String(allTenancies[0]));
       } else {
-        setDrillDownTarget(OCI_TARGETS[0].key);
+        setDrillDownTarget(provider === 'gcp' ? '' : OCI_TARGETS[0].key);
       }
     }
   }, [billingHistory, isRealData, provider, drillDownTarget]);
@@ -212,7 +219,9 @@ export default function App() {
       
       if (!response.ok) {
         const errorText = await response.text();
-        throw new Error(`Server Error (${response.status}): ${errorText.substring(0, 50)}`);
+        let detail = errorText.substring(0, 50);
+        try { const j = JSON.parse(errorText); if (j && j.error) detail = String(j.error).substring(0, 220); } catch { /* not JSON */ }
+        throw new Error(`Server Error (${response.status}): ${detail}`);
       }
 
       const raw = await response.json();
@@ -244,7 +253,7 @@ export default function App() {
     return targets.map(target => {
       const filtered = month.entries.filter(e => {
         // For OCI real data, we match on the combined key
-        if (provider === 'oci' && isRealData && target.key.includes('|')) {
+        if (multi && isRealData && target.key.includes('|')) {
           const [t, r] = target.key.split('|');
           return String(e.tenancy || e.Tenancy || "Unknown") === t && 
                  String(e.region || e.Region || "Global") === r;
@@ -260,7 +269,7 @@ export default function App() {
   const currentMonthData = billingHistory[billingHistory.length - 1] || { month: 'N/A', entries: [] };
   const aggLatest = useMemo(() => getAggregatedData(currentMonthData), [currentMonthData, provider]);
   // OCI: hide tenancy/region pairs whose cost rounds to $0
-  const chartData = provider === 'oci' ? aggLatest.filter(x => x.cost >= 0.005) : aggLatest;
+  const chartData = multi ? aggLatest.filter(x => x.cost >= 0.005) : aggLatest;
   const totalSpendLatest = currentMonthData.entries.reduce((sum, e) => sum + e.cost, 0);
   // OCI: tenancy with the highest total cost (all regions) in the latest month
   const topTenancy = useMemo(() => {
@@ -301,7 +310,7 @@ export default function App() {
     const serviceMap: Record<string, number> = {};
     month.entries.filter(e => {
        // OCI real data: exact tenancy + region match (same rule as the dashboard chart)
-       if (provider === 'oci' && isRealData && String(target.key).includes('|')) {
+       if (multi && isRealData && String(target.key).includes('|')) {
          const [t, r] = String(target.key).split('|');
          return String(e.tenancy || e.Tenancy || "Unknown") === t &&
                 String(e.region || e.Region || "Global") === r;
@@ -314,13 +323,13 @@ export default function App() {
     });
 
     return Object.entries(serviceMap).map(([name, cost]) => ({ name, cost }))
-      .filter(s => provider !== 'oci' || s.cost >= 0.005) // OCI: hide $0 services
+      .filter(s => !multi || s.cost >= 0.005) // OCI: hide $0 services
       .sort((a,b) => b.cost - a.cost);
   }, [drillDownMonthIdx, drillDownTarget, billingHistory, provider, currentTargets, isRealData]);
 
   // OCI: only list tenancy/region pairs that have cost in the selected month
   const explorerTargets = useMemo(() => {
-    if (provider !== 'oci' || !isRealData) return currentTargets;
+    if (!multi || !isRealData) return currentTargets;
     const month = billingHistory[drillDownMonthIdx];
     if (!month) return currentTargets;
     const totals: Record<string, number> = {};
@@ -333,7 +342,7 @@ export default function App() {
 
   // Keep the selection on an entry that has data
   useEffect(() => {
-    if (provider === 'oci' && isRealData && explorerTargets.length > 0 && !explorerTargets.some(t => t.key === drillDownTarget)) {
+    if (multi && isRealData && explorerTargets.length > 0 && !explorerTargets.some(t => t.key === drillDownTarget)) {
       setDrillDownTarget(String(explorerTargets[0].key));
     }
   }, [explorerTargets, drillDownTarget, provider, isRealData]);
@@ -471,8 +480,8 @@ def sync_billing():
 if __name__ == '__main__':
     app.run(host='0.0.0.0', port=5000)`;
 
-  const brandColorClass = provider === 'aws' ? 'bg-blue-600' : 'bg-rose-600';
-  const brandTextClass = provider === 'aws' ? 'text-blue-600' : 'text-rose-600';
+  const brandColorClass = provider === 'aws' ? 'bg-blue-600' : provider === 'gcp' ? 'bg-emerald-600' : 'bg-rose-600';
+  const brandTextClass = provider === 'aws' ? 'text-blue-600' : provider === 'gcp' ? 'text-emerald-600' : 'text-rose-600';
 
   return (
     <div className="min-h-screen bg-[#f8fafc] flex font-sans text-slate-900">
@@ -486,6 +495,7 @@ if __name__ == '__main__':
           <div className="mb-10 bg-slate-100 p-2 rounded-2xl flex gap-1">
              <button onClick={() => setProvider('aws')} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${provider === 'aws' ? 'bg-white text-blue-600 shadow-sm' : 'text-slate-500 hover:text-slate-900'}`}>AWS</button>
              <button onClick={() => setProvider('oci')} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${provider === 'oci' ? 'bg-white text-rose-600 shadow-sm' : 'text-slate-500 hover:text-slate-900'}`}>Oracle</button>
+             <button onClick={() => setProvider('gcp')} className={`flex-1 py-3 rounded-xl text-[10px] font-black uppercase tracking-widest transition-all ${provider === 'gcp' ? 'bg-white text-emerald-600 shadow-sm' : 'text-slate-500 hover:text-slate-900'}`}>GCP</button>
           </div>
 
           <nav className="space-y-1">
@@ -496,7 +506,7 @@ if __name__ == '__main__':
               { id: 'services', icon: Layers, label: 'Service Explorer' },
               { id: 'inventory', icon: Server, label: 'Inventory & Cleanup' }
             ].map(tab => (
-              <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl text-sm font-bold transition-all ${activeTab === tab.id ? `${provider === 'aws' ? 'bg-blue-50 text-blue-700' : 'bg-rose-50 text-rose-700'} shadow-sm` : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}>
+              <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl text-sm font-bold transition-all ${activeTab === tab.id ? `${provider === 'aws' ? 'bg-blue-50 text-blue-700' : provider === 'gcp' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'} shadow-sm` : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}>
                 <tab.icon size={20} /> {tab.label}
               </button>
             ))}
@@ -506,7 +516,7 @@ if __name__ == '__main__':
           <div className="bg-slate-900 rounded-[40px] p-8 shadow-2xl border border-slate-800">
             <div className="flex items-center justify-between mb-6 text-white font-black text-[10px] uppercase tracking-widest">
               <span className="flex items-center gap-2"><Cpu size={14} className={brandTextClass} /> {provider === 'aws' ? 'LAMBDA BRIDGE' : 'FUNCTION BRIDGE'}</span>
-              <button onClick={() => setShowLambdaInfo(true)} className={`${brandTextClass} hover:text-white transition-colors`}><Settings2 size={14} /></button>
+              {provider !== 'gcp' && <button onClick={() => setShowLambdaInfo(true)} className={`${brandTextClass} hover:text-white transition-colors`}><Settings2 size={14} /></button>}
             </div>
             <form onSubmit={syncData} className="space-y-4">
               <input type="text" placeholder={provider === 'aws' ? "https://<LAMBDA_URL>/sync" : "https://<FUNCTION_URL>/sync"} className="w-full px-4 py-4 bg-slate-800/50 border border-slate-700 rounded-2xl text-[11px] font-bold text-white outline-none focus:ring-2 focus:ring-blue-500" value={credentials.endpoint} onChange={e => setCredentials({...credentials, endpoint: e.target.value})} />
@@ -521,7 +531,7 @@ if __name__ == '__main__':
       <main className="flex-1 overflow-y-auto">
         <header className="h-24 border-b border-slate-200 bg-white/80 backdrop-blur-2xl sticky top-0 z-40 px-12 flex items-center justify-between">
           <div className="flex items-center gap-4">
-            <span className="text-slate-400 font-bold text-[11px] uppercase tracking-widest">{provider === 'aws' ? 'AWS Global Infra' : 'OCI Cloud Functions'}</span>
+            <span className="text-slate-400 font-bold text-[11px] uppercase tracking-widest">{provider === 'aws' ? 'AWS Global Infra' : provider === 'gcp' ? 'Google Cloud Billing' : 'OCI Cloud Functions'}</span>
             <ChevronRight size={16} className="text-slate-200" />
             <span className={`font-black text-[11px] uppercase tracking-widest bg-slate-100 px-4 py-2 rounded-full ${brandTextClass}`}>{activeTab}</span>
           </div>
@@ -537,14 +547,14 @@ if __name__ == '__main__':
                <div className="grid grid-cols-1 md:grid-cols-3 gap-10">
                   <div className="bg-white p-12 rounded-[64px] border border-slate-200 shadow-sm relative overflow-hidden group">
                     <div className={`absolute -top-6 -right-6 p-12 opacity-[0.03] ${brandTextClass}`}><DollarSign size={160} /></div>
-                    <div className="flex justify-between items-start mb-8"><div className={`p-5 ${provider === 'aws' ? 'bg-blue-50 text-blue-600' : 'bg-rose-50 text-rose-600'} rounded-[32px]`}><DollarSign size={32} /></div></div>
+                    <div className="flex justify-between items-start mb-8"><div className={`p-5 ${provider === 'aws' ? 'bg-blue-50 text-blue-600' : provider === 'gcp' ? 'bg-emerald-50 text-emerald-600' : 'bg-rose-50 text-rose-600'} rounded-[32px]`}><DollarSign size={32} /></div></div>
                     <h3 className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-2">{currentMonthData.month} Spending</h3>
                     <p className="text-6xl font-black text-slate-900 tracking-tighter">${totalSpendLatest.toLocaleString()}</p>
                   </div>
                   <div className="bg-white p-12 rounded-[64px] border border-slate-200 shadow-sm relative overflow-hidden group">
                     <div className={`absolute -top-6 -right-6 p-12 opacity-[0.03] ${provider === 'aws' ? 'text-indigo-600' : 'text-amber-600'}`}><Globe size={160} /></div>
                     <div className="flex justify-between items-start mb-8"><div className={`p-5 ${provider === 'aws' ? 'bg-indigo-50 text-indigo-600' : 'bg-amber-50 text-amber-600'} rounded-[32px]`}><Globe size={32} /></div></div>
-                    {provider === 'oci' ? (
+                    {multi ? (
                       <>
                         <h3 className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-2">Highest Spend · {currentMonthData.month}</h3>
                         <p className="text-3xl font-black text-slate-900 tracking-tight">{topTenancy?.name ?? '—'}</p>
@@ -568,15 +578,15 @@ if __name__ == '__main__':
                </div>
                
                <div className="bg-white rounded-[72px] border border-slate-200 p-16 shadow-sm">
-                  <h2 className="text-[13px] font-black uppercase tracking-[0.2em] mb-16 flex items-center gap-4"><span className={`w-4 h-4 rounded-full animate-pulse ${brandColorClass}`} /> {provider === 'aws' ? 'Regional' : 'Tenancy'} Distribution</h2>
+                  <h2 className="text-[13px] font-black uppercase tracking-[0.2em] mb-16 flex items-center gap-4"><span className={`w-4 h-4 rounded-full animate-pulse ${brandColorClass}`} /> {provider === 'aws' ? 'Regional' : unitLabel} Distribution</h2>
                   <div className="h-[550px]">
                     <ResponsiveContainer width="100%" height="100%">
-                      <BarChart data={chartData} margin={provider === 'oci' ? { bottom: 20, left: 60 } : { bottom: 60 }}>
+                      <BarChart data={chartData} margin={multi ? { bottom: 20, left: 60 } : { bottom: 60 }}>
                         <CartesianGrid strokeDasharray="3 3" vertical={false} stroke="#f1f5f9" />
-                        <XAxis dataKey="label" interval={0} axisLine={false} tickLine={false} tick={provider === 'oci' ? <AngledTick /> : <CustomTick />} height={provider === 'oci' ? 150 : undefined} />
+                        <XAxis dataKey="label" interval={0} axisLine={false} tickLine={false} tick={multi ? <AngledTick /> : <CustomTick />} height={multi ? 150 : undefined} />
                         <YAxis tickFormatter={(val) => `$${val.toLocaleString()}`} stroke="#cbd5e1" fontSize={11} axisLine={false} tickLine={false} fontWeight="black" />
                         <Tooltip cursor={{ fill: '#f8fafc', radius: 32 }} contentStyle={{ borderRadius: '48px', border: 'none', boxShadow: '0 20px 25px -5px rgb(0 0 0 / 0.1)', padding: '20px' }} />
-                        <Bar dataKey="cost" radius={provider === 'oci' ? [16, 16, 0, 0] : [24, 24, 0, 0]} barSize={provider === 'oci' ? undefined : 80} maxBarSize={80}>
+                        <Bar dataKey="cost" radius={multi ? [16, 16, 0, 0] : [24, 24, 0, 0]} barSize={multi ? undefined : 80} maxBarSize={80}>
                           {chartData.map((entry, index) => (
                             <Cell key={`cell-${index}`} fill={
                               entry.color === 'blue' ? '#3b82f6' : 
@@ -589,7 +599,7 @@ if __name__ == '__main__':
                               entry.color === 'red' ? '#ef4444' : '#64748b'
                             } />
                           ))}
-                          {provider === 'oci' && (
+                          {multi && (
                             <LabelList dataKey="cost" position="top" offset={8} fill="#0f172a" fontSize={12} fontWeight={900}
                               formatter={(v: any) => { const n = Number(v) || 0; if (n < 0.01) return ''; return n < 1 ? `$${n.toFixed(2)}` : `$${Math.round(n).toLocaleString()}`; }} />
                           )}
@@ -612,17 +622,17 @@ if __name__ == '__main__':
                 </div>
                 <div className="overflow-x-auto">
                   <table className="w-full text-left">
-                    <thead><tr className="text-[11px] font-black uppercase tracking-widest text-slate-400 bg-slate-50/80"><th className="py-12 px-16 w-48">Period</th><th className="py-12 px-16 w-64 text-right">Total Billing</th><th className="py-12 px-16 text-center">{provider === 'aws' ? 'Regional' : 'Tenancy'} Breakdown</th></tr></thead>
+                    <thead><tr className="text-[11px] font-black uppercase tracking-widest text-slate-400 bg-slate-50/80"><th className="py-12 px-16 w-48">Period</th><th className="py-12 px-16 w-64 text-right">Total Billing</th><th className="py-12 px-16 text-center">{provider === 'aws' ? 'Regional' : unitLabel} Breakdown</th></tr></thead>
                     <tbody className="divide-y divide-slate-100">
                       {[...billingHistory].reverse().map((month, idx) => {
                         const total = month.entries.reduce((s, e) => s + e.cost, 0);
-                        const breakdown = provider === 'oci' ? getAggregatedData(month).filter(b => b.cost >= 0.005) : getAggregatedData(month);
+                        const breakdown = multi ? getAggregatedData(month).filter(b => b.cost >= 0.005) : getAggregatedData(month);
                         return (
                           <tr key={idx} className="group hover:bg-slate-50 transition-all">
                             <td className="py-12 px-16 font-black text-slate-900 text-lg uppercase">{month.month}</td>
                             <td className="py-12 px-16 text-right font-mono font-black text-slate-900 text-3xl tracking-tighter">${total.toLocaleString()}</td>
                             <td className="py-12 px-8">
-                              {breakdown.length === 0 && provider === 'oci' && !isRealData ? (
+                              {breakdown.length === 0 && multi && !isRealData ? (
                                 <div className="text-center py-4 text-slate-300 font-black uppercase text-[10px] tracking-widest border-2 border-dashed border-slate-100 rounded-3xl">Sync Required</div>
                               ) : (
                                 <div className="grid grid-cols-5 gap-4">
@@ -637,10 +647,10 @@ if __name__ == '__main__':
                                       b.color === 'orange' ? 'text-orange-600' : 
                                       b.color === 'red' ? 'text-red-600' : 'text-slate-600';
                                     
-                                    const ociMatch = provider === 'oci' ? String(b.label).match(/^(.*?)\s*\((.*?)\)$/) : null;
+                                    const ociMatch = multi ? String(b.label).match(/^(.*?)\s*\((.*?)\)$/) : null;
                                     return (
                                       <div key={i} title={String(b.label)} className={`px-4 py-5 rounded-[40px] border-2 ${b.cost > 0 ? 'bg-white border-slate-100 shadow-md' : 'opacity-20'} transition-all hover:scale-[1.05]`}>
-                                        {provider === 'oci' ? (
+                                        {multi ? (
                                           <>
                                             <span className={`text-[10px] font-black uppercase tracking-tight block text-center truncate ${colorClass}`}>{ociMatch ? ociMatch[1] : String(b.label)}</span>
                                             {ociMatch && <span className="text-[10px] font-bold text-slate-400 tracking-tight block text-center truncate mb-0.5">{ociMatch[2]}</span>}
@@ -667,11 +677,11 @@ if __name__ == '__main__':
 
           {activeTab === 'comparison' && (
             <div className="animate-in fade-in slide-in-from-bottom-8 duration-700 space-y-12">
-               {currentTargets.length === 0 && provider === 'oci' && !isRealData ? (
+               {currentTargets.length === 0 && multi && !isRealData ? (
                  <div className="bg-white rounded-[72px] border border-slate-200 p-32 text-center shadow-sm">
                     <ArrowRightLeft size={64} className="mx-auto text-slate-200 mb-8 animate-pulse" />
-                    <h2 className="text-2xl font-black text-slate-900 mb-4">OCI Sync Required</h2>
-                    <p className="text-slate-500 font-bold max-w-md mx-auto">Please connect your OCI Function to compare costs across tenancies.</p>
+                    <h2 className="text-2xl font-black text-slate-900 mb-4">{providerName} Sync Required</h2>
+                    <p className="text-slate-500 font-bold max-w-md mx-auto">{provider === 'gcp' ? 'Google Cloud billing data is not available yet. It appears automatically once the BigQuery billing export has data.' : 'Please connect your OCI Function to compare costs across tenancies.'}</p>
                  </div>
                ) : (
                  <div className="grid grid-cols-1 gap-8">
@@ -711,20 +721,21 @@ if __name__ == '__main__':
           )}
 
           {activeTab === 'inventory' && provider === 'aws' && <InventoryTab />}
-          {activeTab === 'inventory' && provider === 'oci' && <OciInventoryTab endpoint={DEFAULT_ENDPOINTS.oci} />}
+          {activeTab === 'inventory' && provider === 'oci' && <OciInventoryTab key="oci" endpoint={DEFAULT_ENDPOINTS.oci} />}
+          {activeTab === 'inventory' && provider === 'gcp' && <OciInventoryTab key="gcp" endpoint={DEFAULT_ENDPOINTS.gcp} cloud="gcp" />}
 
           {activeTab === 'services' && (
             <div className="animate-in fade-in slide-in-from-bottom-8 duration-700 space-y-12">
-               {currentTargets.length === 0 && provider === 'oci' && !isRealData ? (
+               {currentTargets.length === 0 && multi && !isRealData ? (
                  <div className="bg-white rounded-[72px] border border-slate-200 p-32 text-center shadow-sm">
                     <Layers size={64} className="mx-auto text-slate-200 mb-8 animate-pulse" />
                     <h2 className="text-2xl font-black text-slate-900 mb-4">Service Explorer Locked</h2>
-                    <p className="text-slate-500 font-bold max-w-md mx-auto">Sync your OCI account to explore costs by service and tenancy.</p>
+                    <p className="text-slate-500 font-bold max-w-md mx-auto">{provider === 'gcp' ? 'Google Cloud billing data is not available yet. It appears automatically once the BigQuery billing export has data.' : 'Sync your OCI account to explore costs by service and tenancy.'}</p>
                  </div>
                ) : (
                  <div className="grid grid-cols-1 lg:grid-cols-4 gap-8">
                     <div className="lg:col-span-1 space-y-4">
-                      <h3 className="text-[11px] font-black uppercase text-slate-400 tracking-widest px-4">Select {provider === 'aws' ? 'Region' : 'Tenancy'}</h3>
+                      <h3 className="text-[11px] font-black uppercase text-slate-400 tracking-widest px-4">Select {provider === 'aws' ? 'Region' : unitLabel}</h3>
                       <div className="space-y-2">
                         {explorerTargets.map(t => (
                           <button key={t.key} onClick={() => setDrillDownTarget(String(t.key))} className={`w-full text-left px-6 py-4 rounded-2xl font-bold transition-all ${drillDownTarget === t.key ? `${brandColorClass} text-white shadow-lg scale-[1.02]` : 'bg-white border border-slate-100 text-slate-600 hover:bg-slate-50'}`}>
