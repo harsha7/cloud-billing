@@ -22,7 +22,7 @@ export interface CloudCredentials {
   ociTenancyOcid?: string;
 }
 
-export type CloudProvider = 'aws' | 'oci';
+export type CloudProvider = 'aws' | 'oci' | 'gcp';
 
 export interface DashboardState {
   history: MonthlyData[];
