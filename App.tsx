@@ -126,6 +126,9 @@ export default function App() {
   
   const [isRealData, setIsRealData] = useState(false);
   const [serviceSearch, setServiceSearch] = useState("");
+  // GCP: per-project summary returned by the Google Cloud function (summary.projects)
+  const [gcpProjects, setGcpProjects] = useState<any[] | null>(null);
+  const [gcpNotes, setGcpNotes] = useState<string[]>([]);
 
   const currentTargets = useMemo(() => {
     if (provider === 'aws') return AWS_TARGETS;
@@ -230,6 +233,10 @@ export default function App() {
       if (activeProviderRef.current !== prov) return;
       if (Array.isArray(data)) {
         setBillingHistory(data);
+        if (prov === 'gcp') {
+          setGcpProjects(Array.isArray(raw?.summary?.projects) ? raw.summary.projects : null);
+          setGcpNotes(Array.isArray(raw?.summary?.warnings) ? raw.summary.warnings : []);
+        }
         setIsRealData(true);
         setBaseMonthIdx(Math.max(0, data.length - 2));
         setTargetMonthIdx(Math.max(0, data.length - 1));
@@ -608,6 +615,57 @@ if __name__ == '__main__':
                     </ResponsiveContainer>
                   </div>
                </div>
+
+               {provider === 'gcp' && isRealData && gcpProjects && (
+                 <div className="bg-white rounded-[72px] border border-slate-200 p-16 shadow-sm">
+                   <h2 className="text-[13px] font-black uppercase tracking-[0.2em] mb-3 flex items-center gap-4"><span className={`w-4 h-4 rounded-full ${brandColorClass}`} /> All Projects · {gcpProjects.length}</h2>
+                   <p className="text-[11px] font-bold text-slate-400 mb-10">Net cost after credits, in the billing account's currency. Projects with no charges are listed at $0.00.</p>
+                   <div className="overflow-x-auto">
+                     <table className="w-full text-left text-sm">
+                       <thead>
+                         <tr className="text-[10px] font-black uppercase tracking-widest text-slate-400 border-b border-slate-100">
+                           <th className="py-3 pr-4">Project</th>
+                           <th className="py-3 pr-4 text-right">This month so far</th>
+                           <th className="py-3 pr-4 text-right">Last month</th>
+                           <th className="py-3 pr-4 text-right">Last 12 months</th>
+                           <th className="py-3 text-right">Credits (12 mo)</th>
+                         </tr>
+                       </thead>
+                       <tbody>
+                         {gcpProjects.map((p: any) => {
+                           const fmt = (n: number) => `$${(Number(n) || 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}`;
+                           const idle = !p.total_12m && !p.mtd;
+                           return (
+                             <tr key={p.id || p.name} className={`border-b border-slate-50 ${idle ? 'text-slate-400' : ''}`}>
+                               <td className="py-4 pr-4">
+                                 <div className={`font-black ${idle ? 'text-slate-400' : 'text-slate-900'}`}>{p.name}</div>
+                                 <div className="text-[11px] font-bold text-slate-400">{p.id || 'not tied to a project'}{p.billing_enabled === false ? ' · billing disabled' : ''}</div>
+                               </td>
+                               <td className="py-4 pr-4 text-right font-mono font-bold">{fmt(p.mtd)}</td>
+                               <td className="py-4 pr-4 text-right font-mono font-bold">{fmt(p.last_month)}</td>
+                               <td className={`py-4 pr-4 text-right font-mono font-black ${idle ? '' : 'text-slate-900'}`}>{fmt(p.total_12m)}</td>
+                               <td className="py-4 text-right font-mono font-bold text-emerald-600">{p.credits_12m ? fmt(p.credits_12m) : '—'}</td>
+                             </tr>
+                           );
+                         })}
+                       </tbody>
+                       <tfoot>
+                         <tr>
+                           <td className="pt-5 text-[11px] font-black uppercase tracking-widest text-slate-400">Total</td>
+                           {(['mtd', 'last_month', 'total_12m', 'credits_12m'] as const).map(k => (
+                             <td key={k} className="pt-5 pr-4 text-right font-mono font-black text-slate-900">
+                               ${gcpProjects.reduce((sum: number, p: any) => sum + (Number(p[k]) || 0), 0).toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
+                             </td>
+                           ))}
+                         </tr>
+                       </tfoot>
+                     </table>
+                   </div>
+                   {gcpNotes.length > 0 && (
+                     <ul className="mt-8 space-y-1 text-xs font-bold text-amber-700">{gcpNotes.map((n, i) => <li key={i}>{n}</li>)}</ul>
+                   )}
+                 </div>
+               )}
             </div>
           )}
 
