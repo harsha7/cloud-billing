@@ -94,11 +94,89 @@ def billing():
         totals[e["tenancy"]] = totals.get(e["tenancy"], 0.0) + e["cost"]
         regions[e["region"]] = regions.get(e["region"], 0.0) + e["cost"]
     ms = sorted(formatted)
+    warnings = []
+    try:
+        projects = project_summary(start_m, first_this.strftime("%Y%m"), warnings)
+    except Exception as e:  # never break the main view for the project list
+        projects, _ = [], warnings.append(f"projects: {type(e).__name__}: {e}"[:300])
     return {"data": [{"month": month_label(m), "entries": formatted[m]} for m in ms],
             "summary": {"tenancies": sorted(totals), "tenancies_without_cost": [],
                         "tenancy_totals": totals, "region_totals": regions,
                         "months": [month_label(m) for m in ms], "total_cost": sum(totals.values()),
-                        "currency": currency, "generated_at": now.strftime('%Y-%m-%dT%H:%M:%SZ')}}
+                        "currency": currency, "generated_at": now.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                        "projects": projects, "warnings": warnings}}
+
+
+def linked_projects(billing_account, warnings):
+    """Every project linked to the billing account (needs roles/billing.viewer); best effort."""
+    try:
+        import google.auth
+        from google.auth.transport.requests import AuthorizedSession
+        creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/cloud-billing.readonly"])
+        sess = AuthorizedSession(creds)
+        out, token = [], None
+        while True:
+            url = f"https://cloudbilling.googleapis.com/v1/billingAccounts/{billing_account}/projects?pageSize=300"
+            if token:
+                url += f"&pageToken={token}"
+            r = sess.get(url, timeout=20)
+            if r.status_code != 200:
+                warnings.append("Projects with no charges are not listed: the function cannot read the billing "
+                                f"account's project list (HTTP {r.status_code}). Grant it Billing Account Viewer to include them.")
+                return []
+            j = r.json()
+            out += [(p.get("projectId", ""), bool(p.get("billingEnabled"))) for p in j.get("projectBillingInfo", [])]
+            token = j.get("nextPageToken")
+            if not token:
+                return out
+    except Exception as e:
+        warnings.append(f"project list: {type(e).__name__}: {e}"[:300])
+        return []
+
+
+def project_summary(start_m, this_m, warnings):
+    """Per project: this month so far, last month, 12-month total, gross and credits."""
+    sql = f"""
+      SELECT IFNULL(project.id, '') AS pid, ANY_VALUE(project.name) AS pname, invoice.month AS m,
+             ANY_VALUE(billing_account_id) AS ba,
+             SUM(cost) AS gross, SUM(IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c), 0)) AS credits
+      FROM {export_table()}
+      WHERE invoice.month >= @start_m
+        AND usage_start_time >= TIMESTAMP_SUB(@start_ts, INTERVAL 7 DAY)
+      GROUP BY pid, m"""
+    rows = run(sql, [bigquery.ScalarQueryParameter("start_m", "STRING", start_m),
+                     bigquery.ScalarQueryParameter("start_ts", "TIMESTAMP",
+                                                   datetime.strptime(start_m, "%Y%m").replace(tzinfo=timezone.utc))])
+    last_m = (datetime.strptime(this_m, "%Y%m") - timedelta(days=1)).strftime("%Y%m")
+    proj, ba = {}, None
+    for r in rows:
+        ba = ba or r.ba
+        key = r.pid or "(billing account)"
+        p = proj.setdefault(key, {"id": r.pid, "name": r.pname or ("Tax / account-level" if not r.pid else r.pid),
+                                  "mtd": 0.0, "last_month": 0.0, "total_12m": 0.0, "gross_12m": 0.0,
+                                  "credits_12m": 0.0, "billing_enabled": None, "months": {}})
+        net = float(r.gross or 0) + float(r.credits or 0)
+        p["months"][month_label(r.m)] = round(p["months"].get(month_label(r.m), 0.0) + net, 2)
+        if r.m == this_m:
+            p["mtd"] += net
+        else:
+            p["total_12m"] += net
+            p["gross_12m"] += float(r.gross or 0)
+            p["credits_12m"] += float(r.credits or 0)
+            if r.m == last_m:
+                p["last_month"] += net
+    if ba:
+        for pid, enabled in linked_projects(ba, warnings):
+            p = proj.setdefault(pid, {"id": pid, "name": pid, "mtd": 0.0, "last_month": 0.0, "total_12m": 0.0,
+                                      "gross_12m": 0.0, "credits_12m": 0.0, "months": {}})
+            p["billing_enabled"] = enabled
+    out = []
+    for p in proj.values():
+        for k in ("mtd", "last_month", "total_12m", "gross_12m", "credits_12m"):
+            p[k] = round(p[k], 2)
+        out.append(p)
+    out.sort(key=lambda p: (-p["total_12m"] - p["mtd"], p["name"].lower()))
+    return out
 
 
 API_NAMES = {"compute": "Compute Engine", "storage": "Cloud Storage", "sqladmin": "Cloud SQL",
