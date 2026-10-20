@@ -283,7 +283,7 @@ def inventory(period):
             "warnings": warnings}
 
 
-def audit_creators(project_ids, since, warnings):
+def audit_creators(project_ids, since, warnings, methods=None):
     """{(project, short resource path): (principal, timestamp)} from Admin Activity audit logs.
     Needs roles/logging.viewer on the projects; best effort."""
     try:
@@ -298,8 +298,10 @@ def audit_creators(project_ids, since, warnings):
     for pid in project_ids:
         flt = (f'logName="projects/{pid}/logs/cloudaudit.googleapis.com%2Factivity" '
                f'AND timestamp>="{since.strftime("%Y-%m-%dT%H:%M:%SZ")}" AND '
-               '(protoPayload.methodName:"insert" OR protoPayload.methodName:"create" '
-               'OR protoPayload.methodName:"Create")')
+               + (methods or '(protoPayload.methodName:"insert" OR protoPayload.methodName:"create" '
+                  'OR protoPayload.methodName:"Create")')
+               # GKE writes every Kubernetes pod/event create to the same log - skip those
+               + ' AND NOT protoPayload.serviceName="k8s.io" AND NOT resource.type="k8s_cluster"')
         token, pages = None, 0
         while pages < 5:
             body = {"resourceNames": [f"projects/{pid}"], "filter": flt, "orderBy": "timestamp asc", "pageSize": 1000}
@@ -374,6 +376,9 @@ def recent(days):
         warnings.append(f"labels: {type(e).__name__}: {e}"[:300])
 
     audits = audit_creators(sorted({r.pid for r in rows if r.pid}), since - timedelta(days=1), warnings)
+    gke_pids = sorted({r.pid for r in rows if r.pid and "goog-k8s-cluster-name" in labels.get(r.gn, {})})
+    gke_audits = audit_creators(gke_pids, now - timedelta(days=399), [],
+                                '(protoPayload.methodName:"CreateCluster" OR protoPayload.methodName:"CreateNodePool")') if gke_pids else []
     today_s = today.strftime('%Y-%m-%d')
     active_since = (today - timedelta(days=2)).strftime('%Y-%m-%d')   # export lags up to a day
     out = []
@@ -400,6 +405,26 @@ def recent(days):
                 who, src = principal, "audit log"
                 created = ts[:19] + "Z" if ts else created
                 break
+        cl, pool = lab.get("goog-k8s-cluster-name"), lab.get("goog-k8s-node-pool-name")
+        if cl and (not who or "gserviceaccount.com" in who):
+            hit = None
+            for pid, rn, principal, ts in gke_audits:
+                if pid != r.pid:
+                    continue
+                if pool and rn.endswith(f"/clusters/{cl}/nodePools/{pool}"):
+                    hit = (principal, ts, f"node pool {pool}")
+                    break
+                if rn.endswith(f"/clusters/{cl}") and not hit:
+                    hit = (principal, ts, f"cluster {cl}")
+            where = f"GKE cluster {cl}" + (f", pool {pool}" if pool else "")
+            if hit and hit[0]:
+                when = hit[1][:10]
+                if when >= since.strftime('%Y-%m-%d'):
+                    who, src = hit[0], f"audit log - created {hit[2]} {when}"
+                else:
+                    who, src = f"GKE (managed node, {where})", f"{hit[2]} created by {hit[0]} on {when}; node added/replaced by GKE (upgrade, repair or autoscale)"
+            else:
+                who, src = f"GKE (managed node, {where})", "node added/replaced by GKE (upgrade, repair or autoscale)"
         if not who and owner:
             who, src = owner, "label"
         svc = (r.svcs or ["Other"])[0]
