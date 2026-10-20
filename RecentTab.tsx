@@ -12,6 +12,7 @@ type Row = {
   tags: Record<string, string>; est_monthly_usd: number | null; price_basis?: string;
   cost_so_far?: number; details?: string; size?: string;
   tenancy?: string; compartment?: string; not_included?: string;
+  status?: 'active' | 'ended'; last_billed?: string;
 };
 type Recent = {
   mode: string; days: number; since: string; generated_at: string; resources: Row[];
@@ -43,6 +44,9 @@ const THEME: Record<Cloud, { btn: string; active: string; text: string; chipOn: 
   gcp: { btn: 'bg-emerald-600', active: 'bg-white text-emerald-700 shadow-sm', text: 'text-emerald-600', chipOn: 'bg-emerald-600 text-white', ring: 'focus:ring-emerald-500' },
 };
 const SCOPE: Record<Cloud, string> = { aws: 'Region', oci: 'Tenancy', gcp: 'Project' };
+// Automatic backups/snapshots are created every day by backup policies: hidden unless asked for
+const isBackup = (r: Row) => /backup|snapshot/i.test(r.resource_type || '');
+const isEnded = (r: Row) => r.status === 'ended';
 
 export default function RecentTab({ cloud, endpoint }: { cloud: Cloud; endpoint: string }) {
   const th = THEME[cloud];
@@ -55,6 +59,8 @@ export default function RecentTab({ cloud, endpoint }: { cloud: Cloud; endpoint:
   const [scope, setScope] = useState('All');
   const [query, setQuery] = useState('');
   const [copied, setCopied] = useState('');
+  const [showBackups, setShowBackups] = useState(false);
+  const [showEnded, setShowEnded] = useState(true);
   const reqId = useRef(0);
   const url = cloud === 'aws' ? readEndpoint() : endpoint;
 
@@ -87,22 +93,33 @@ export default function RecentTab({ cloud, endpoint }: { cloud: Cloud; endpoint:
   useEffect(() => { setScope('All'); load(); }, [days, region]);
 
   const scopeOf = (r: Row) => cloud === 'aws' ? r.region : (r.tenancy || '');
+  const all = data?.resources || [];
+  const backups = all.filter(isBackup);
+  const ended = all.filter(r => isEnded(r) && (showBackups || !isBackup(r)));
+  const base = useMemo(() => all.filter(r => (showBackups || !isBackup(r)) && (showEnded || !isEnded(r))),
+    [data, showBackups, showEnded]);
+  const live = base.filter(r => !isEnded(r));
+  const kpi = {
+    count: base.length,
+    cost: live.reduce((s, r) => s + (r.est_monthly_usd || 0), 0),
+    creators: base.filter(r => r.created_by).length,
+  };
   const scopes = useMemo(() => {
     const out: Record<string, { count: number; cost: number }> = {};
-    (data?.resources || []).forEach(r => {
+    base.forEach(r => {
       const k = scopeOf(r) || '—';
       const o = out[k] = out[k] || { count: 0, cost: 0 };
       o.count++; o.cost += r.est_monthly_usd || 0;
     });
     return Object.entries(out).sort((a, b) => b[1].cost - a[1].cost);
-  }, [data]);
+  }, [base]);
 
   const q = query.trim().toLowerCase();
-  const rows = useMemo(() => (data?.resources || [])
+  const rows = useMemo(() => base
     .filter(r => scope === 'All' || (scopeOf(r) || '—') === scope)
     .filter(r => !q || [r.name, r.resource_id, r.resource_type, r.created_by, r.region, r.tenancy, r.compartment,
       ...Object.entries(r.tags || {}).map(([k, v]) => `${k}=${v}`)].some(v => (v || '').toLowerCase().includes(q))),
-    [data, scope, q]);
+    [base, scope, q]);
   const shownTotal = rows.reduce((s, r) => s + (r.est_monthly_usd || 0), 0);
   const notes = [...(data?.warnings || []), ...(data?.errors || [])];
 
@@ -163,17 +180,17 @@ export default function RecentTab({ cloud, endpoint }: { cloud: Cloud; endpoint:
           <div className="grid grid-cols-1 md:grid-cols-3 gap-6">
             <div className="bg-white p-10 rounded-[48px] border border-slate-200 shadow-sm">
               <h3 className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-2">New resources</h3>
-              <p className="text-4xl font-black text-slate-900 tracking-tighter">{data.summary.count}</p>
-              <p className="text-xs font-bold text-slate-400 mt-2">created in the last {data.days} days</p>
+              <p className="text-4xl font-black text-slate-900 tracking-tighter">{kpi.count}</p>
+              <p className="text-xs font-bold text-slate-400 mt-2">created in the last {data.days} days{ended.length && showEnded ? ` · ${ended.length} already gone` : ''}</p>
             </div>
             <div className="bg-white p-10 rounded-[48px] border border-slate-200 shadow-sm">
               <h3 className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-2">Added to the monthly bill</h3>
-              <p className={`text-4xl font-black tracking-tighter ${th.text}`}>{money(data.summary.est_monthly_usd)}</p>
+              <p className={`text-4xl font-black tracking-tighter ${th.text}`}>{money(kpi.cost)}</p>
               <p className="text-xs font-bold text-slate-400 mt-2">{isEstimate ? 'estimated from their daily cost so far' : 'on-demand list price, fixed charges'}</p>
             </div>
             <div className="bg-white p-10 rounded-[48px] border border-slate-200 shadow-sm">
               <h3 className="text-slate-400 text-[11px] font-black uppercase tracking-widest mb-2">Creator known</h3>
-              <p className="text-4xl font-black text-slate-900 tracking-tighter">{data.summary.creators_found} <span className="text-xl text-slate-400">/ {data.summary.count}</span></p>
+              <p className="text-4xl font-black text-slate-900 tracking-tighter">{kpi.creators} <span className="text-xl text-slate-400">/ {kpi.count}</span></p>
               <p className="text-xs font-bold text-slate-400 mt-2">{cloud === 'aws' ? 'from CloudTrail or owner tags' : cloud === 'gcp' ? 'from audit logs or labels' : 'from Oracle-Tags.CreatedBy'}</p>
             </div>
           </div>
@@ -183,7 +200,7 @@ export default function RecentTab({ cloud, endpoint }: { cloud: Cloud; endpoint:
               <div className="space-y-3">
                 <p className="text-[10px] font-black uppercase tracking-widest text-slate-400">{SCOPE[cloud]}</p>
                 <div className="flex flex-wrap gap-2">
-                  <button onClick={() => setScope('All')} className={chip(scope === 'All')}>All · {money(data.summary.est_monthly_usd)}</button>
+                  <button onClick={() => setScope('All')} className={chip(scope === 'All')}>All · {money(kpi.cost)}</button>
                   {scopes.map(([s, v]) => (
                     <button key={s} onClick={() => setScope(s)} className={chip(scope === s)}>{s} · {v.count} · {money(v.cost)}</button>
                   ))}
@@ -191,10 +208,24 @@ export default function RecentTab({ cloud, endpoint }: { cloud: Cloud; endpoint:
               </div>
             )}
 
-            <div className="relative w-full md:w-96">
-              <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
-              <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name, ID, type, creator, tag…"
-                className={`w-full pl-11 pr-4 py-3 rounded-2xl border border-slate-200 bg-white text-sm font-bold outline-none focus:ring-2 ${th.ring}`} />
+            <div className="flex flex-col md:flex-row md:items-center gap-4">
+              <div className="relative w-full md:w-96">
+                <Search size={16} className="absolute left-4 top-1/2 -translate-y-1/2 text-slate-400" />
+                <input value={query} onChange={e => setQuery(e.target.value)} placeholder="Search name, ID, type, creator, tag…"
+                  className={`w-full pl-11 pr-4 py-3 rounded-2xl border border-slate-200 bg-white text-sm font-bold outline-none focus:ring-2 ${th.ring}`} />
+              </div>
+              {backups.length > 0 && (
+                <label className="flex items-center gap-2 text-xs font-black text-slate-600 cursor-pointer select-none">
+                  <input type="checkbox" checked={showBackups} onChange={e => setShowBackups(e.target.checked)} />
+                  Show automatic backups &amp; snapshots ({backups.length})
+                </label>
+              )}
+              {all.some(isEnded) && (
+                <label className="flex items-center gap-2 text-xs font-black text-slate-600 cursor-pointer select-none">
+                  <input type="checkbox" checked={showEnded} onChange={e => setShowEnded(e.target.checked)} />
+                  Show resources that are already gone
+                </label>
+              )}
             </div>
 
             <div className="overflow-x-auto">
@@ -213,7 +244,7 @@ export default function RecentTab({ cloud, endpoint }: { cloud: Cloud; endpoint:
                   {rows.map(r => {
                     const tags = Object.entries(r.tags || {}).filter(([k]) => k !== 'Name');
                     return (
-                      <tr key={r.region + r.resource_id} className="border-b border-slate-50 align-top hover:bg-slate-50/60">
+                      <tr key={r.region + r.resource_id} className={`border-b border-slate-50 align-top hover:bg-slate-50/60 ${isEnded(r) ? 'opacity-50' : ''}`}>
                         <td className="py-4 pr-4 max-w-xs">
                           {r.name
                             ? <div className="font-black text-slate-900 break-all">{r.name}</div>
@@ -223,6 +254,7 @@ export default function RecentTab({ cloud, endpoint }: { cloud: Cloud; endpoint:
                             {copied === r.resource_id ? 'copied ✓' : `${r.resource_type}${r.name ? ' · copy ID' : ''}`}
                           </button>
                           {r.details && <div className="text-[11px] text-slate-400 mt-1">{r.details}</div>}
+                          {isEnded(r) && <div className="mt-1"><span className="px-2 py-0.5 rounded-full bg-slate-200 text-[10px] font-black uppercase text-slate-600">no longer billing{r.last_billed ? ` since ${fmtDay(r.last_billed + 'T00:00:00Z')}` : ''}</span></div>}
                         </td>
                         <td className="py-4 pr-4">
                           <div className="font-bold text-slate-700">{cloud === 'aws' ? r.region : r.tenancy}</div>
