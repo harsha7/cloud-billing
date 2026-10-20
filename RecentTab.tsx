@@ -47,6 +47,8 @@ const SCOPE: Record<Cloud, string> = { aws: 'Region', oci: 'Tenancy', gcp: 'Proj
 // Automatic backups/snapshots are created every day by backup policies: hidden unless asked for
 const isBackup = (r: Row) => /backup|snapshot/i.test(r.resource_type || '');
 const isEnded = (r: Row) => r.status === 'ended';
+// Not resources: individual query/job charges (GCP bills each BigQuery job separately)
+const isJob = (r: Row) => /BigQuery job/i.test(r.resource_type || '');
 
 export default function RecentTab({ cloud, endpoint }: { cloud: Cloud; endpoint: string }) {
   const th = THEME[cloud];
@@ -93,7 +95,7 @@ export default function RecentTab({ cloud, endpoint }: { cloud: Cloud; endpoint:
   useEffect(() => { setScope('All'); load(); }, [days, region]);
 
   const scopeOf = (r: Row) => cloud === 'aws' ? r.region : (r.tenancy || '');
-  const all = data?.resources || [];
+  const all = (data?.resources || []).filter(r => !isJob(r));
   const backups = all.filter(isBackup);
   const ended = all.filter(r => isEnded(r) && (showBackups || !isBackup(r)));
   const base = useMemo(() => all.filter(r => (showBackups || !isBackup(r)) && (showEnded || !isEnded(r))),
