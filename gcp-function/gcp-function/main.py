@@ -5,7 +5,7 @@ JSON shape as the OCI function, so the dashboard treats GCP like another provide
 (projects take the place of tenancies). Read-only.
 
 Env: BILLING_DATASET = "<project>.<dataset>" (the export table is found automatically)
-     ALLOWED_ORIGIN  = dashboard origin for CORS (default https://harsha7.github.io)
+     ALLOWED_ORIGIN  = comma-separated dashboard origins for CORS (default GitHub Pages + Bitbucket)
 
 Request body (POST JSON):
   {}                                                -> billing: last 12 full months
@@ -19,7 +19,8 @@ import functions_framework
 from google.cloud import bigquery
 
 DATASET = os.environ.get("BILLING_DATASET", "")
-ALLOWED_ORIGIN = os.environ.get("ALLOWED_ORIGIN", "https://harsha7.github.io")
+ALLOWED_ORIGINS = [o.strip() for o in os.environ.get(
+    "ALLOWED_ORIGIN", "https://harsha7.github.io,https://redirontech.bitbucket.io").split(",") if o.strip()]
 OWNER_LABELS = ("owner", "created-by", "created_by", "createdby", "creator")
 NET = "(cost + IFNULL((SELECT SUM(c.amount) FROM UNNEST(credits) c), 0))"
 
@@ -456,7 +457,8 @@ def recent(days):
 
 @functions_framework.http
 def handler(request):
-    cors = {"Access-Control-Allow-Origin": ALLOWED_ORIGIN, "Vary": "Origin",
+    origin = request.headers.get("Origin", "")
+    cors = {"Access-Control-Allow-Origin": origin if origin in ALLOWED_ORIGINS else ALLOWED_ORIGINS[0], "Vary": "Origin",
             "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
             "Access-Control-Allow-Headers": "Content-Type", "Access-Control-Max-Age": "3600"}
     if request.method == "OPTIONS":
