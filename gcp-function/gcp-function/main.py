@@ -375,16 +375,21 @@ def recent(days):
 
     audits = audit_creators(sorted({r.pid for r in rows if r.pid}), since - timedelta(days=1), warnings)
     today_s = today.strftime('%Y-%m-%d')
+    active_since = (today - timedelta(days=2)).strftime('%Y-%m-%d')   # export lags up to a day
     out = []
     for r in rows:
         days_cost = daily.get(r.gn, {})
         ds = sorted(days_cost)
+        last_day = ds[-1] if ds else ""
         full = [d for d in ds[1:] if d < today_s]
-        if full:
-            per_day = sum(days_cost[d] for d in full) / len(full)
+        if last_day and last_day < active_since:
+            per_day, status = 0.0, "ended"
+            basis = f"no charges since {last_day} - deleted or stopped"
+        elif full:
+            per_day, status = sum(days_cost[d] for d in full) / len(full), "active"
             basis = f"avg of {len(full)} full day{'s' if len(full) != 1 else ''} x 30.4"
         else:
-            per_day = max(days_cost.values()) if days_cost else 0.0
+            per_day, status = (max(days_cost.values()) if days_cost else 0.0), "active"
             basis = "first (partial) day x 30.4 - will firm up after a full day"
         lab = labels.get(r.gn, {})
         owner = next((lab[k] for k in lab if k.lower() in OWNER_LABELS), "")
@@ -405,7 +410,8 @@ def recent(days):
             "created": created, "created_source": "audit log" if src == "audit log" else "first billed",
             "created_by": who, "created_by_source": src, "tags": lab,
             "cost_so_far": round(sum(days_cost.values()), 2),
-            "est_monthly_usd": round(per_day * 30.4, 2), "price_basis": basis})
+            "est_monthly_usd": round(per_day * 30.4, 2), "price_basis": basis,
+            "status": status, "last_billed": last_day})
     out.sort(key=lambda x: x["created"], reverse=True)
     by_project = {}
     for x in out:
