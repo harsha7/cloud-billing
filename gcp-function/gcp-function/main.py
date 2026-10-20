@@ -174,6 +174,8 @@ def project_summary(start_m, this_m, warnings):
     for p in proj.values():
         for k in ("mtd", "last_month", "total_12m", "gross_12m", "credits_12m"):
             p[k] = round(p[k], 2)
+        if not p["id"] and not (p["mtd"] or p["total_12m"]):
+            continue  # account-level row with nothing on it
         out.append(p)
     out.sort(key=lambda p: (-p["total_12m"] - p["mtd"], p["name"].lower()))
     return out
@@ -281,6 +283,146 @@ def inventory(period):
             "warnings": warnings}
 
 
+def audit_creators(project_ids, since, warnings):
+    """{(project, short resource path): (principal, timestamp)} from Admin Activity audit logs.
+    Needs roles/logging.viewer on the projects; best effort."""
+    try:
+        import google.auth
+        from google.auth.transport.requests import AuthorizedSession
+        creds, _ = google.auth.default(scopes=["https://www.googleapis.com/auth/logging.read"])
+        sess = AuthorizedSession(creds)
+    except Exception as e:
+        warnings.append(f"audit logs: {type(e).__name__}: {e}"[:300])
+        return []
+    found, denied = [], []
+    for pid in project_ids:
+        flt = (f'logName="projects/{pid}/logs/cloudaudit.googleapis.com%2Factivity" '
+               f'AND timestamp>="{since.strftime("%Y-%m-%dT%H:%M:%SZ")}" AND '
+               '(protoPayload.methodName:"insert" OR protoPayload.methodName:"create" '
+               'OR protoPayload.methodName:"Create")')
+        token, pages = None, 0
+        while pages < 5:
+            body = {"resourceNames": [f"projects/{pid}"], "filter": flt, "orderBy": "timestamp asc", "pageSize": 1000}
+            if token:
+                body["pageToken"] = token
+            r = sess.post("https://logging.googleapis.com/v2/entries:list", json=body, timeout=30)
+            if r.status_code != 200:
+                if r.status_code in (401, 403):
+                    denied.append(pid)
+                else:
+                    warnings.append(f"audit logs {pid}: HTTP {r.status_code}"[:200])
+                break
+            j = r.json()
+            for e in j.get("entries", []):
+                pp = e.get("protoPayload", {}) or {}
+                if (pp.get("status") or {}).get("code"):
+                    continue  # failed call
+                who = (pp.get("authenticationInfo") or {}).get("principalEmail", "")
+                found.append((pid, pp.get("resourceName", ""), who, e.get("timestamp", "")))
+            token, pages = j.get("nextPageToken"), pages + 1
+            if not token:
+                break
+    if denied:
+        warnings.append("creator needs Logs Viewer on: " + ", ".join(denied)
+                        + " (grant roles/logging.viewer to the function's service account)")
+    return found
+
+
+def recent(days):
+    """Resources first billed in the last `days` days, with a monthly run-rate, labels and creator."""
+    now = datetime.now(timezone.utc)
+    today = now.replace(hour=0, minute=0, second=0, microsecond=0)
+    since = today - timedelta(days=days)
+    warnings = []
+    T = export_table()
+    p_since = bigquery.ScalarQueryParameter("since", "TIMESTAMP", since)
+    rows = run(f"""
+      SELECT IFNULL(project.id, '') AS pid, ANY_VALUE(project.name) AS pname,
+             resource.global_name AS gn, ANY_VALUE(resource.name) AS rname,
+             ANY_VALUE(IFNULL(location.region, IFNULL(location.location, 'global'))) AS region,
+             MIN(usage_start_time) AS first_seen,
+             ARRAY_AGG(DISTINCT service.description IGNORE NULLS LIMIT 3) AS svcs,
+             ARRAY_AGG(DISTINCT sku.description IGNORE NULLS LIMIT 4) AS skus
+      FROM {T}
+      WHERE usage_start_time >= TIMESTAMP_SUB(@since, INTERVAL 45 DAY) AND resource.global_name IS NOT NULL
+      GROUP BY pid, gn
+      HAVING first_seen >= @since""", [p_since])
+    if not rows:
+        return {"mode": "recent", "days": days, "since": since.strftime('%Y-%m-%dT%H:%M:%SZ'),
+                "generated_at": now.strftime('%Y-%m-%dT%H:%M:%SZ'), "resources": [],
+                "summary": {"count": 0, "est_monthly_usd": 0, "creators_found": 0, "by_tenancy": {}},
+                "warnings": warnings}
+    gns = [r.gn for r in rows]
+    p_gns = bigquery.ArrayQueryParameter("gns", "STRING", gns)
+    daily = {}
+    for r in run(f"""
+      SELECT resource.global_name AS gn, FORMAT_DATE('%Y-%m-%d', DATE(usage_start_time)) AS d,
+             SUM({NET}) AS net, ANY_VALUE(currency) AS currency
+      FROM {T} WHERE usage_start_time >= @since AND resource.global_name IN UNNEST(@gns)
+      GROUP BY gn, d""", [p_since, p_gns]):
+        daily.setdefault(r.gn, {})[r.d] = float(r.net or 0)
+        currency = r.currency
+    labels = {}
+    try:
+        for r in run(f"""
+          SELECT resource.global_name AS gn, l.key AS k, ANY_VALUE(l.value) AS v
+          FROM {T}, UNNEST(labels) l
+          WHERE usage_start_time >= @since AND resource.global_name IN UNNEST(@gns)
+          GROUP BY gn, k""", [p_since, p_gns]):
+            labels.setdefault(r.gn, {})[r.k] = r.v
+    except Exception as e:
+        warnings.append(f"labels: {type(e).__name__}: {e}"[:300])
+
+    audits = audit_creators(sorted({r.pid for r in rows if r.pid}), since - timedelta(days=1), warnings)
+    today_s = today.strftime('%Y-%m-%d')
+    out = []
+    for r in rows:
+        days_cost = daily.get(r.gn, {})
+        ds = sorted(days_cost)
+        full = [d for d in ds[1:] if d < today_s]
+        if full:
+            per_day = sum(days_cost[d] for d in full) / len(full)
+            basis = f"avg of {len(full)} full day{'s' if len(full) != 1 else ''} x 30.4"
+        else:
+            per_day = max(days_cost.values()) if days_cost else 0.0
+            basis = "first (partial) day x 30.4 - will firm up after a full day"
+        lab = labels.get(r.gn, {})
+        owner = next((lab[k] for k in lab if k.lower() in OWNER_LABELS), "")
+        created, who, src = r.first_seen.strftime('%Y-%m-%dT%H:%M:%SZ'), "", ""
+        short = (r.rname or r.gn.rsplit("/", 1)[-1])
+        for pid, rn, principal, ts in audits:
+            if pid == r.pid and short and (rn.endswith("/" + short) or rn == short):
+                who, src = principal, "audit log"
+                created = ts[:19] + "Z" if ts else created
+                break
+        if not who and owner:
+            who, src = owner, "label"
+        svc = (r.svcs or ["Other"])[0]
+        out.append({
+            "tenancy": r.pname or r.pid or "(billing account)", "tenancy_ocid": r.pid, "region": r.region,
+            "compartment": r.pid, "resource_id": r.gn, "name": r.rname or "",
+            "resource_type": resource_type(r.gn, svc), "service": svc, "skus": list(r.skus or []),
+            "created": created, "created_source": "audit log" if src == "audit log" else "first billed",
+            "created_by": who, "created_by_source": src, "tags": lab,
+            "cost_so_far": round(sum(days_cost.values()), 2),
+            "est_monthly_usd": round(per_day * 30.4, 2), "price_basis": basis})
+    out.sort(key=lambda x: x["created"], reverse=True)
+    by_project = {}
+    for x in out:
+        t = by_project.setdefault(x["tenancy"], {"count": 0, "cost": 0.0})
+        t["count"] += 1
+        t["cost"] += x["est_monthly_usd"]
+    return {"mode": "recent", "days": days, "since": since.strftime('%Y-%m-%dT%H:%M:%SZ'),
+            "generated_at": now.strftime('%Y-%m-%dT%H:%M:%SZ'), "resources": out,
+            "summary": {"count": len(out), "est_monthly_usd": round(sum(x["est_monthly_usd"] for x in out), 2),
+                        "creators_found": sum(1 for x in out if x["created_by"]),
+                        "by_tenancy": {k: {"count": v["count"], "cost": round(v["cost"], 2)}
+                                       for k, v in sorted(by_project.items(), key=lambda kv: -kv[1]["cost"])}},
+            "note": "Resources first billed in the window (BigQuery billing export). Monthly estimate = "
+                    "average daily net cost so far x 30.4, in the billing account's currency.",
+            "warnings": warnings}
+
+
 @functions_framework.http
 def handler(request):
     cors = {"Access-Control-Allow-Origin": ALLOWED_ORIGIN, "Vary": "Origin",
@@ -291,7 +433,9 @@ def handler(request):
     headers = dict(cors, **{"Content-Type": "application/json"})
     try:
         body = request.get_json(silent=True) or {}
-        if body.get("mode") == "inventory":
+        if body.get("mode") == "recent":
+            out = recent(max(1, min(int(body.get("days") or 14), 31)))
+        elif body.get("mode") == "inventory":
             out = inventory("mtd" if body.get("period") == "mtd" else "last_month")
         else:
             out = billing()
