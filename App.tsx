@@ -10,12 +10,13 @@ import {
   ChevronRight, X, Copy, Terminal, Settings2, Activity as Pulse, AlertTriangle, Link2,
   ArrowRightLeft, Minus, Plus, Calendar, ChevronDown, ArrowRight, Layers,
   Search, Download, ChevronLeft, Filter, ExternalLink, Info, ChevronUp, Box,
-  ShieldAlert, FileText, Lock, ListOrdered, MousePointer2, Cpu, Clock
+  ShieldAlert, FileText, Lock, ListOrdered, MousePointer2, Cpu, Clock, Mail
 } from 'lucide-react';
 import { MonthlyData, CloudCredentials, BillingEntry, CloudProvider } from './types';
 import InventoryTab from './InventoryTab';
 import OciInventoryTab from './OciInventoryTab';
 import RecentTab from './RecentTab';
+import EmailReportTab from './EmailReportTab';
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -118,7 +119,7 @@ export default function App() {
   const unitLabel = provider === 'gcp' ? 'Project' : 'Tenancy';
   const providerName = provider === 'gcp' ? 'Google Cloud' : provider === 'oci' ? 'OCI' : 'AWS';
   const [billingHistory, setBillingHistory] = useState<MonthlyData[]>(generateMockData('aws'));
-  const [activeTab, setActiveTab] = useState<'overview' | 'trends' | 'comparison' | 'services' | 'inventory' | 'recent'>('overview');
+  const [activeTab, setActiveTab] = useState<'overview' | 'trends' | 'comparison' | 'services' | 'inventory' | 'recent' | 'email'>('overview');
   const [isFetching, setIsFetching] = useState(false);
   const [showLambdaInfo, setShowLambdaInfo] = useState(false);
   const [toast, setToast] = useState<{ message: string, type: 'success' | 'error' } | null>(null);
@@ -513,7 +514,8 @@ if __name__ == '__main__':
               { id: 'comparison', icon: ArrowRightLeft, label: 'MoM Comparison' },
               { id: 'services', icon: Layers, label: 'Service Explorer' },
               { id: 'inventory', icon: Server, label: 'Inventory & Cleanup' },
-              { id: 'recent', icon: Clock, label: 'Recently Created' }
+              { id: 'recent', icon: Clock, label: 'Recently Created' },
+              { id: 'email', icon: Mail, label: 'Email Report' }
             ].map(tab => (
               <button key={tab.id} onClick={() => setActiveTab(tab.id as any)} className={`w-full flex items-center gap-4 px-6 py-4 rounded-2xl text-sm font-bold transition-all ${activeTab === tab.id ? `${provider === 'aws' ? 'bg-blue-50 text-blue-700' : provider === 'gcp' ? 'bg-emerald-50 text-emerald-700' : 'bg-rose-50 text-rose-700'} shadow-sm` : 'text-slate-500 hover:bg-slate-50 hover:text-slate-900'}`}>
                 <tab.icon size={20} /> {tab.label}
@@ -784,6 +786,7 @@ if __name__ == '__main__':
           {activeTab === 'inventory' && provider === 'oci' && <OciInventoryTab key="oci" endpoint={DEFAULT_ENDPOINTS.oci} />}
           {activeTab === 'inventory' && provider === 'gcp' && <OciInventoryTab key="gcp" endpoint={DEFAULT_ENDPOINTS.gcp} cloud="gcp" />}
           {activeTab === 'recent' && <RecentTab key={provider} cloud={provider} endpoint={DEFAULT_ENDPOINTS[provider]} />}
+          {activeTab === 'email' && <EmailReportTab key={provider} cloud={provider} history={billingHistory} isRealData={isRealData} loading={isFetching} />}
 
           {activeTab === 'services' && (
             <div className="animate-in fade-in slide-in-from-bottom-8 duration-700 space-y-12">
