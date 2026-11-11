@@ -1,6 +1,7 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, Search, AlertTriangle, Info, Layers, Clock, User, Tag } from 'lucide-react';
 import { readEndpoint, REGION_OPTIONS } from './InventoryTab';
+import { withAuth } from './auth';
 
 // "Recently Created": resources created in the last N days, with a monthly estimate, creator and tags.
 // AWS: inventory Lambda {mode:'recent'} (creation time from the APIs, creator from CloudTrail or tags).
@@ -76,7 +77,7 @@ export default function RecentTab({ cloud, endpoint }: { cloud: Cloud; endpoint:
     try {
       const body: any = { mode: 'recent', days };
       if (cloud === 'aws') body.regions = region === 'used' ? AWS_USED : region === 'all' ? 'all' : [region];
-      const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const resp = await fetch(url, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(withAuth(body)) });
       const json: Recent = await resp.json();
       if (id !== reqId.current) return;
       if (!resp.ok || json.error) throw new Error(json.error || `HTTP ${resp.status}`);
