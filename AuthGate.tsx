@@ -78,7 +78,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
             <div className="flex items-start gap-3 text-left bg-amber-50 border border-amber-200 rounded-2xl p-4 mb-6">
               <ShieldAlert size={18} className="text-amber-600 shrink-0 mt-0.5" />
               <p className="text-sm font-bold text-amber-900">
-                You're signed in as <span className="font-black">{user.email || user.name}</span>, but your account isn't in the <span className="font-black">{AUTH_CONFIG.requiredGroup}</span> group. Ask your JumpCloud admin to add you, then sign in again.
+                You're signed in as <span className="font-black">{user.email || user.name}</span>, but your account isn't in a group allowed to use CloudSpend (<span className="font-black">{AUTH_CONFIG.allowedGroups.join(', ')}</span>). Ask your JumpCloud admin to add you, then sign in again.
                 {user.groups.length > 0 && <span className="block mt-2 text-xs font-bold text-amber-700">Groups JumpCloud sent: {user.groups.join(', ')}</span>}
                 {user.groups.length === 0 && <span className="block mt-2 text-xs font-bold text-amber-700">No groups came through with the sign-in. Admin: on the CloudSpend app in JumpCloud, tick “Include group attribute” with the name memberOf.</span>}
               </p>
