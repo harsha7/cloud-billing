@@ -1,0 +1,28 @@
+name: Mirror to Bitbucket
+
+# Copies main to bitbucket.org/redirontech/cloud-spend on every push.
+# Bitbucket Pipelines then rebuilds https://redirontech.bitbucket.io/cloudspend/
+# Needs the repository secret BITBUCKET_TOKEN (a cloud-spend repository access token with Repositories: Write).
+
+on:
+  push:
+    branches: ["main"]
+  workflow_dispatch:
+
+jobs:
+  mirror:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+      - name: Push to Bitbucket
+        env:
+          BITBUCKET_TOKEN: ${{ secrets.BITBUCKET_TOKEN }}
+        run: |
+          if [ -z "$BITBUCKET_TOKEN" ]; then
+            echo "BITBUCKET_TOKEN secret not set yet - skipping the Bitbucket sync."
+            exit 0
+          fi
+          git push --force "https://x-token-auth:${BITBUCKET_TOKEN}@bitbucket.org/redirontech/cloud-spend.git" HEAD:main
