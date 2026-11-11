@@ -17,6 +17,7 @@ import InventoryTab from './InventoryTab';
 import OciInventoryTab from './OciInventoryTab';
 import RecentTab from './RecentTab';
 import EmailReportTab from './EmailReportTab';
+import { REDIRON_LOGO } from './rediron-logo';
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -496,8 +497,8 @@ if __name__ == '__main__':
     <div className="min-h-screen bg-[#f8fafc] flex font-sans text-slate-900">
       <aside className="w-84 bg-white border-r border-slate-200 flex flex-col sticky top-0 h-screen shrink-0 shadow-sm z-50">
         <div className="p-8">
-          <div className="flex items-center gap-3 mb-8">
-            <div className={`${brandColorClass} p-3 rounded-2xl text-white shadow-xl`}><Activity size={24} /></div>
+          <div className="mb-8">
+            <img src={REDIRON_LOGO} alt="RedIron - Forging Retail Innovation" className="w-48 h-auto mb-4" />
             <div><h1 className="text-lg font-black tracking-tight leading-none">CloudSpend</h1><span className="text-[10px] font-black uppercase tracking-widest text-slate-400">Enterprise Hub</span></div>
           </div>
 
