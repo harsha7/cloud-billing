@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, Search, AlertTriangle, Info, Layers, Server, Trash2 } from 'lucide-react';
+import { withAuth } from './auth';
 
 // OCI inventory: actual billed cost per resource across every tenancy, from the parent
 // tenancy's Usage API via the existing cloudspend-func ({ mode: 'inventory' }).
@@ -58,7 +59,7 @@ export default function OciInventoryTab({ endpoint, cloud = 'oci' }: { endpoint:
     try {
       const resp = await fetch(endpoint, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: 'oci', mode: 'inventory', period: p }),
+        body: JSON.stringify(withAuth({ provider: 'oci', mode: 'inventory', period: p })),
       });
       const json: OciInventory = await resp.json();
       if (id !== reqId.current) return;
