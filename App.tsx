@@ -18,6 +18,7 @@ import OciInventoryTab from './OciInventoryTab';
 import RecentTab from './RecentTab';
 import EmailReportTab from './EmailReportTab';
 import { REDIRON_LOGO } from './rediron-logo';
+import { withAuth } from './auth';
 
 const MONTH_NAMES = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
 
@@ -218,7 +219,7 @@ export default function App() {
       const response = await fetch(endpoint, {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ provider: prov })
+        body: JSON.stringify(withAuth({ provider: prov }))
       });
       // Ignore responses that arrive after the user switched provider
       if (activeProviderRef.current !== prov) return;
