@@ -7,7 +7,9 @@ export const AUTH_CONFIG = {
   authorizeUrl: 'https://oauth.id.jumpcloud.com/oauth2/auth',
   tokenUrl: 'https://oauth.id.jumpcloud.com/oauth2/token',
   clientId: '6632b7c7-f8f7-4a72-8060-a3ef24c697c7',
-  requiredGroup: 'CloudSpend Viewers',
+  // Who may sign in is decided in JumpCloud: the user groups ticked on the Cloudspend app.
+  // Optionally also restrict here by group name (empty list = anyone JumpCloud lets in).
+  allowedGroups: [] as string[],
   // 'off'  = no sign-in
   // 'test' = sign-in only when the page is opened with ?sso=1 (for trying it out)
   // 'on'   = everyone must sign in
@@ -67,7 +69,8 @@ export function currentUser(): AuthUser | null {
   return u;
 }
 
-export const isAllowed = (u: AuthUser | null) => !!u && u.groups.some(g => g.toLowerCase() === AUTH_CONFIG.requiredGroup.toLowerCase());
+export const isAllowed = (u: AuthUser | null) => !!u && (AUTH_CONFIG.allowedGroups.length === 0
+  || u.groups.some(g => AUTH_CONFIG.allowedGroups.some(a => a.toLowerCase() === g.toLowerCase())));
 
 /** The token the data functions check, or undefined when sign-in is not in use. */
 export function authToken(): string | undefined {
