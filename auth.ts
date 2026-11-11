@@ -13,7 +13,7 @@ export const AUTH_CONFIG = {
   // 'off'  = no sign-in
   // 'test' = sign-in only when the page is opened with ?sso=1 (for trying it out)
   // 'on'   = everyone must sign in
-  mode: 'test' as 'off' | 'test' | 'on',
+  mode: 'on' as 'off' | 'test' | 'on',
 };
 
 const K = { token: 'cs.auth.idtoken', pending: 'cs.auth.pending', test: 'cs.auth.test' };
