@@ -1,5 +1,6 @@
 import React, { useEffect, useMemo, useRef, useState } from 'react';
 import { RefreshCw, Search, AlertTriangle, Server, Trash2, Layers, Info, Settings2 } from 'lucide-react';
+import { withAuth } from './auth';
 
 // Read-only AWS inventory + cleanup scan (Lambda: cloudspend-aws-inventory).
 // The Function URL is NOT stored in this public repo: it is entered once on the tab
@@ -73,7 +74,7 @@ export default function InventoryTab() {
     try {
       const resp = await fetch(endpoint, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify(r === 'all' ? {} : { regions: [r] }),
+        body: JSON.stringify(withAuth(r === 'all' ? {} : { regions: [r] })),
       });
       const json: ScanResult = await resp.json();
       if (id !== reqId.current) return; // a newer scan replaced this one
