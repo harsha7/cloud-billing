@@ -1,0 +1,34 @@
+image: node:20
+
+pipelines:
+  branches:
+    main:
+      - step:
+          name: Build and publish to redirontech.bitbucket.io/cloudspend
+          caches:
+            - node
+          script:
+            - npm install
+            # Bitbucket-only build settings (repo's vite.config.ts stays as-is for GitHub Pages):
+            # site path /cloudspend/ and lowercase file names, which bitbucket.io requires
+            - |
+              cat > vite.bitbucket.config.mjs <<'EOF'
+              import { defineConfig } from 'vite';
+              import react from '@vitejs/plugin-react';
+              export default defineConfig({
+                plugins: [react()],
+                base: '/cloudspend/',
+                build: { rollupOptions: { output: { hashCharacters: 'hex',
+                  entryFileNames: 'assets/[name]-[hash].js', chunkFileNames: 'assets/[name]-[hash].js',
+                  assetFileNames: 'assets/[name]-[hash][extname]' } } },
+              });
+              EOF
+            - npx vite build --config vite.bitbucket.config.mjs
+            - git clone --depth 1 "https://x-token-auth:${HOSTING_TOKEN}@bitbucket.org/redirontech/redirontech.bitbucket.io.git" site
+            - rm -rf site/cloudspend && mkdir -p site/cloudspend && cp -r dist/. site/cloudspend/
+            - cd site
+            - git config user.email "pipelines@bitbucket.org"
+            - git config user.name "CloudSpend pipeline"
+            - git add -A
+            - git diff --cached --quiet || git commit -m "Publish CloudSpend ${BITBUCKET_COMMIT}"
+            - git push origin HEAD
