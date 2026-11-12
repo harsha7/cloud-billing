@@ -13,6 +13,7 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
   const [error, setError] = useState<string | null>(null);
   const [expired, setExpired] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [email, setEmail] = useState(() => { try { return localStorage.getItem('cs.auth.lastEmail') || ''; } catch { return ''; } });
 
   useEffect(() => {
     if (!enabled) return;
@@ -34,7 +35,12 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
 
   if (!enabled) return <>{children}</>;
 
-  const go = async () => { setBusy(true); await startSignIn(); };
+  const go = async (e?: React.FormEvent) => {
+    e?.preventDefault();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email.trim())) { setError('Enter your work email, for example ri-jdoe@redirontech.com'); return; }
+    try { localStorage.setItem('cs.auth.lastEmail', email.trim()); } catch { /* storage blocked */ }
+    setError(null); setBusy(true); await startSignIn(email);
+  };
   const out = () => { signOut(); setUser(null); setExpired(false); setError(null); setPhase('signedOut'); };
 
   if (phase === 'ok' && user) {
@@ -67,9 +73,14 @@ export default function AuthGate({ children }: { children: React.ReactNode }) {
         {phase === 'signedOut' && (
           <>
             <p className="text-sm font-bold text-slate-500 mb-6">{expired ? 'Your session has expired. Sign in again to keep going.' : 'Sign in with your RedIron JumpCloud account to view cloud costs.'}</p>
-            <button onClick={go} disabled={busy} className="w-full py-4 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-3 shadow-lg active:scale-95 transition-transform disabled:opacity-60">
-              {busy ? <Loader2 size={16} className="animate-spin" /> : <LogIn size={16} />} Sign in with JumpCloud
-            </button>
+            <form onSubmit={go} className="space-y-3 text-left">
+              <label className="block text-[10px] font-black uppercase tracking-widest text-slate-400" htmlFor="cs-email">Work email</label>
+              <input id="cs-email" type="email" autoComplete="username" autoFocus value={email} onChange={e => setEmail(e.target.value)}
+                placeholder="ri-jdoe@redirontech.com" className="w-full px-4 py-4 bg-slate-50 border border-slate-200 rounded-2xl text-sm font-bold outline-none focus:ring-2 focus:ring-slate-900" />
+              <button type="submit" disabled={busy} className="w-full py-4 bg-slate-900 hover:bg-slate-800 text-white rounded-2xl text-xs font-black uppercase tracking-widest flex items-center justify-center gap-3 shadow-lg active:scale-95 transition-transform disabled:opacity-60">
+                {busy ? <Loader2 size={16} className="animate-spin" /> : <LogIn size={16} />} Continue with JumpCloud
+              </button>
+            </form>
           </>
         )}
 
