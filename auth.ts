@@ -6,7 +6,13 @@ export const AUTH_CONFIG = {
   issuer: 'https://oauth.id.jumpcloud.com/',
   authorizeUrl: 'https://oauth.id.jumpcloud.com/oauth2/auth',
   tokenUrl: 'https://oauth.id.jumpcloud.com/oauth2/token',
-  clientId: '6632b7c7-f8f7-4a72-8060-a3ef24c697c7',
+  // One CloudSpend OIDC app per JumpCloud organization. People type their email on one sign-in
+  // screen and are sent to the organization whose username prefix matches (first match wins;
+  // anything that matches none goes to the first organization).
+  orgs: [
+    { id: 'ric', label: 'RIC', clientId: 'bba53a9d-1ba5-4c39-b2bf-f6b1cc7c23bf', emailPrefixes: ['ric-'] },
+    { id: 'rediron', label: 'RedIron', clientId: '6632b7c7-f8f7-4a72-8060-a3ef24c697c7', emailPrefixes: ['ri-'] },
+  ] as { id: string; label: string; clientId: string; emailPrefixes: string[] }[],
   // Who may sign in is decided in JumpCloud: the user groups ticked on the Cloudspend app.
   // Optionally also restrict here by group name (empty list = anyone JumpCloud lets in).
   allowedGroups: [] as string[],
@@ -38,7 +44,12 @@ export function authEnabled(): boolean {
 const b64url = (bytes: Uint8Array) => btoa(String.fromCharCode(...Array.from(bytes))).replace(/\+/g, '-').replace(/\//g, '_').replace(/=+$/, '');
 const randomString = (n = 32) => b64url(crypto.getRandomValues(new Uint8Array(n)));
 
-export type AuthUser = { name: string; email: string; groups: string[]; exp: number; raw: Record<string, any> };
+export type AuthUser = { name: string; email: string; groups: string[]; exp: number; org: string; raw: Record<string, any> };
+
+const orgForAud = (aud: any) => {
+  const list = Array.isArray(aud) ? aud : [aud];
+  return AUTH_CONFIG.orgs.find(o => list.includes(o.clientId));
+};
 
 function decodeJwt(token: string): Record<string, any> | null {
   try {
@@ -59,7 +70,9 @@ function toUser(token: string | null): AuthUser | null {
   const c = decodeJwt(token);
   if (!c || typeof c.exp !== 'number') return null;
   const name = c.name || [c.given_name, c.family_name].filter(Boolean).join(' ') || c.preferred_username || c.username || c.email || 'Signed in';
-  return { name, email: c.email || '', groups: groupsOf(c), exp: c.exp, raw: c };
+  const org = orgForAud(c.aud);
+  if (!org) return null;
+  return { name, email: c.email || '', groups: groupsOf(c), exp: c.exp, org: org.label, raw: c };
 }
 
 export function currentUser(): AuthUser | null {
@@ -84,15 +97,24 @@ export function withAuth<T extends object>(body: T): T & { auth_token?: string }
   return t ? { ...body, auth_token: t } : body;
 }
 
-export async function startSignIn() {
+/** Which JumpCloud organization an email belongs to, by its username prefix. */
+export function orgForEmail(email: string) {
+  const e = email.trim().toLowerCase();
+  return AUTH_CONFIG.orgs.find(o => o.emailPrefixes.some(p => e.startsWith(p.toLowerCase())))
+    || AUTH_CONFIG.orgs.find(o => o.id === 'rediron') || AUTH_CONFIG.orgs[0];
+}
+
+export async function startSignIn(email: string) {
+  const org = orgForEmail(email);
   const verifier = randomString(48);
   const digest = new Uint8Array(await crypto.subtle.digest('SHA-256', new TextEncoder().encode(verifier)));
   const state = randomString(16), nonce = randomString(16);
-  ss.set(K.pending, JSON.stringify({ verifier, state, nonce }));
+  ss.set(K.pending, JSON.stringify({ verifier, state, nonce, clientId: org.clientId }));
   const p = new URLSearchParams({
-    response_type: 'code', client_id: AUTH_CONFIG.clientId, redirect_uri: redirectUri(),
+    response_type: 'code', client_id: org.clientId, redirect_uri: redirectUri(),
     scope: 'openid profile email', state, nonce,
     code_challenge: b64url(digest), code_challenge_method: 'S256',
+    login_hint: email.trim(),
   });
   window.location.assign(`${AUTH_CONFIG.authorizeUrl}?${p.toString()}`);
 }
@@ -104,20 +126,20 @@ export async function completeSignInIfReturning(): Promise<{ handled: boolean; e
   if (!code && !err) return { handled: false };
   const clean = () => window.history.replaceState({}, document.title, redirectUri());
   if (err) { clean(); return { handled: true, error: `${err}: ${q.get('error_description') || 'sign-in was not completed'}` }; }
-  let pending: { verifier: string; state: string; nonce: string } | null = null;
+  let pending: { verifier: string; state: string; nonce: string; clientId: string } | null = null;
   try { pending = JSON.parse(ss.get(K.pending) || 'null'); } catch { pending = null; }
   ss.del(K.pending);
   if (!pending || pending.state !== state) { clean(); return { handled: true, error: 'The sign-in response did not match this tab. Please sign in again.' }; }
   try {
     const resp = await fetch(AUTH_CONFIG.tokenUrl, {
       method: 'POST', headers: { 'Content-Type': 'application/x-www-form-urlencoded' },
-      body: new URLSearchParams({ grant_type: 'authorization_code', code: code!, redirect_uri: redirectUri(), client_id: AUTH_CONFIG.clientId, code_verifier: pending.verifier }).toString(),
+      body: new URLSearchParams({ grant_type: 'authorization_code', code: code!, redirect_uri: redirectUri(), client_id: pending.clientId, code_verifier: pending.verifier }).toString(),
     });
     const j = await resp.json().catch(() => ({}));
     if (!resp.ok || !j.id_token) throw new Error(j.error_description || j.error || `token request failed (HTTP ${resp.status})`);
     const c = decodeJwt(j.id_token);
     const aud = c && (Array.isArray(c.aud) ? c.aud : [c.aud]);
-    if (!c || !aud || c.iss !== AUTH_CONFIG.issuer || !aud.includes(AUTH_CONFIG.clientId)) throw new Error('the sign-in token was not issued for CloudSpend');
+    if (!c || !aud || c.iss !== AUTH_CONFIG.issuer || !aud.includes(pending.clientId) || !orgForAud(c.aud)) throw new Error('the sign-in token was not issued for CloudSpend');
     if (c.nonce && c.nonce !== pending.nonce) throw new Error('the sign-in token did not match this request');
     ss.set(K.token, j.id_token);
     clean();
